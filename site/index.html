@@ -1,0 +1,940 @@
+<title>Commute Cost Ranker</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=Inter:wght@400;500;600&display=swap">
+<style>
+  /* Layout: sticky control rail + results column; stacks to one column on phones.
+     Visual direction: commuter-rail timetable - dense, institutional, tabular. */
+  :root {
+    --bg:          #f4f6f5;
+    --surface:     #ffffff;
+    --surface-2:   #ecefed;
+    --ink:         #141d1c;
+    --muted:       #5d6b69;
+    --line:        #d6dbd8;
+    --accent:      #10655a;
+    --accent-soft: #d7e8e4;
+    --good:        #1d7a4c;
+    --warn:        #9a6610;
+    --bad:         #9e3429;
+    --font-display: "Barlow Semi Condensed", "Arial Narrow", sans-serif;
+    --font-body:    "Inter", system-ui, -apple-system, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg:          #0e1413;
+      --surface:     #161f1e;
+      --surface-2:   #1e2927;
+      --ink:         #e8ecea;
+      --muted:       #93a3a0;
+      --line:        #2b3836;
+      --accent:      #4cc0ab;
+      --accent-soft: #1b3330;
+      --good:        #52c483;
+      --warn:        #d9a443;
+      --bad:         #e0796b;
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg:          #0e1413;
+    --surface:     #161f1e;
+    --surface-2:   #1e2927;
+    --ink:         #e8ecea;
+    --muted:       #93a3a0;
+    --line:        #2b3836;
+    --accent:      #4cc0ab;
+    --accent-soft: #1b3330;
+    --good:        #52c483;
+    --warn:        #d9a443;
+    --bad:         #e0796b;
+    color-scheme: dark;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--font-body);
+    font-size: 15px;
+    line-height: 1.5;
+    margin: 0;
+  }
+  .wrap {
+    max-width: 1240px;
+    margin: 0 auto;
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+    padding-block: 28px 56px;
+  }
+  h1, h2, h3 { font-family: var(--font-display); font-weight: 700; margin: 0; text-wrap: balance; }
+  h1 { font-size: clamp(30px, 5vw, 46px); letter-spacing: -0.01em; line-height: 1.02; }
+  h2 { font-size: 20px; letter-spacing: 0.01em; }
+  h3 { font-size: 16px; }
+  .eyebrow {
+    font-family: var(--font-display);
+    font-size: 12px; font-weight: 600;
+    letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--muted);
+  }
+  .num { font-variant-numeric: tabular-nums; }
+  a { color: var(--accent); }
+
+  /* ---- header ---- */
+  header { display: flex; flex-direction: column; gap: 10px; padding-bottom: 22px; }
+  .thesis { max-width: 62ch; color: var(--muted); font-size: 16px; margin: 0; }
+  .badges { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .badge {
+    font-family: var(--font-display);
+    font-size: 11.5px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase;
+    border: 1px solid var(--line); border-radius: 2px;
+    padding: 3px 8px; color: var(--muted); background: var(--surface);
+  }
+  .badge.flag { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+
+  /* ---- the verdict panel: the question this tool exists to answer ---- */
+  .verdict {
+    border: 1px solid var(--line); border-top: 3px solid var(--accent);
+    background: var(--surface); margin-bottom: 20px;
+  }
+  .verdict-head { padding: 14px 16px 0; }
+  .verdict-line { font-size: 17px; margin: 6px 0 0; }
+  .verdict-line strong { color: var(--accent); }
+  .zones { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; background: var(--line); margin-top: 14px; }
+  .zone { background: var(--surface); padding: 14px 16px 16px; min-width: 0; }
+  .zone-name { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+  .zone-stat { display: flex; justify-content: space-between; gap: 12px; padding: 5px 0; border-bottom: 1px dotted var(--line); font-size: 14px; }
+  .zone-stat:last-child { border-bottom: 0; }
+  .zone-stat span:last-child { font-weight: 600; }
+  .zone-big { font-family: var(--font-display); font-size: 30px; font-weight: 700; line-height: 1.1; margin-top: 8px; }
+  .zone-big small { font-size: 13px; font-weight: 500; color: var(--muted); font-family: var(--font-body); }
+
+  /* ---- main grid ---- */
+  .cols { display: grid; grid-template-columns: 320px minmax(0, 1fr); gap: 20px; align-items: start; }
+  .rail { position: sticky; top: 12px; display: flex; flex-direction: column; gap: 14px; }
+
+  .card { border: 1px solid var(--line); background: var(--surface); }
+  .card > h2, .card > .card-head {
+    font-family: var(--font-display); font-size: 13px; font-weight: 600;
+    letter-spacing: 0.12em; text-transform: uppercase;
+    padding: 10px 14px; border-bottom: 1px solid var(--line);
+    background: var(--surface-2); color: var(--muted);
+    display: flex; justify-content: space-between; align-items: center; gap: 8px;
+  }
+  .card-body { padding: 14px; display: flex; flex-direction: column; gap: 13px; }
+
+  /* ---- controls ---- */
+  .field { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+  .field label { font-size: 12.5px; color: var(--muted); display: flex; justify-content: space-between; gap: 8px; }
+  .field label b { color: var(--ink); font-variant-numeric: tabular-nums; font-weight: 600; }
+  .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  input[type="number"], select {
+    font: inherit; font-size: 14px; color: var(--ink);
+    background: var(--bg); border: 1px solid var(--line); border-radius: 2px;
+    padding: 6px 8px; width: 100%; min-width: 0;
+    font-variant-numeric: tabular-nums;
+  }
+  input[type="range"] { width: 100%; accent-color: var(--accent); margin: 0; }
+  .presets { display: flex; flex-wrap: wrap; gap: 6px; }
+  .preset {
+    font: inherit; font-size: 12.5px; cursor: pointer;
+    background: var(--bg); color: var(--ink);
+    border: 1px solid var(--line); border-radius: 2px; padding: 4px 9px;
+  }
+  .preset:hover { border-color: var(--accent); color: var(--accent); }
+  .preset[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+  /* The dark palette's accent is light, so pressed text flips to near-black. */
+  :root[data-theme="dark"] .preset[aria-pressed="true"] { color: #07100f; }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .preset[aria-pressed="true"] { color: #07100f; }
+  }
+  button:focus-visible, input:focus-visible, select:focus-visible, tr:focus-visible {
+    outline: 2px solid var(--accent); outline-offset: 1px;
+  }
+  .hint { font-size: 12px; color: var(--muted); margin: 0; }
+
+  /* ---- map ---- */
+  .map-wrap { padding: 0; }
+  svg.map { display: block; width: 100%; height: auto; cursor: crosshair; background: var(--surface); }
+  .legend { display: flex; flex-wrap: wrap; gap: 12px; padding: 9px 14px; border-top: 1px solid var(--line); font-size: 12px; color: var(--muted); }
+  .legend i { display: inline-flex; align-items: center; gap: 5px; font-style: normal; }
+
+  /* ---- table ---- */
+  .table-scroll { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
+  th, td { text-align: right; padding: 7px 9px; white-space: nowrap; }
+  th:first-child, td:first-child, th:nth-child(2), td:nth-child(2) { text-align: left; }
+  thead th {
+    font-family: var(--font-display); font-size: 11.5px; font-weight: 600;
+    letter-spacing: 0.07em; text-transform: uppercase; color: var(--muted);
+    border-bottom: 1px solid var(--line); background: var(--surface-2);
+    position: sticky; top: 0; cursor: pointer; user-select: none;
+  }
+  thead th[aria-sort] { color: var(--accent); }
+  tbody tr { border-bottom: 1px solid var(--line); cursor: pointer; }
+  tbody tr:hover { background: var(--surface-2); }
+  tbody tr.open { background: var(--accent-soft); }
+  .rank { font-family: var(--font-display); font-weight: 700; color: var(--muted); }
+  .addr { font-weight: 500; }
+  .addr small { display: block; color: var(--muted); font-weight: 400; font-size: 12px; }
+  .score { font-family: var(--font-display); font-weight: 700; font-size: 16px; }
+  .zpill {
+    font-family: var(--font-display); font-size: 11px; font-weight: 600;
+    letter-spacing: 0.07em; text-transform: uppercase;
+    padding: 2px 6px; border-radius: 2px; border: 1px solid;
+  }
+  td.detail { padding: 0; }
+  .breakdown { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 14px; padding: 14px; background: var(--surface-2); text-align: left; white-space: normal; }
+  .bk h4 { font-family: var(--font-display); font-size: 11.5px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); margin: 0 0 6px; font-weight: 600; }
+  .bk-row { display: flex; justify-content: space-between; gap: 10px; font-size: 13px; padding: 2px 0; }
+  .bk-row.total { border-top: 1px solid var(--line); margin-top: 4px; padding-top: 5px; font-weight: 600; }
+  .bar { height: 5px; background: var(--line); border-radius: 2px; overflow: hidden; margin-top: 3px; }
+  .bar i { display: block; height: 100%; background: var(--accent); }
+  .nodata { color: var(--warn); font-size: 12px; }
+
+  .diag { display: flex; flex-wrap: wrap; gap: 6px 16px; padding: 11px 14px; font-size: 12.5px; color: var(--muted); border-top: 1px solid var(--line); }
+  .diag b { color: var(--ink); font-variant-numeric: tabular-nums; }
+  .empty { padding: 30px 16px; text-align: center; color: var(--muted); }
+
+  footer { margin-top: 32px; border-top: 1px solid var(--line); padding-top: 18px; color: var(--muted); font-size: 13.5px; display: flex; flex-direction: column; gap: 10px; }
+  footer p { margin: 0; max-width: 72ch; }
+  code { font-size: 12.5px; background: var(--surface-2); padding: 1px 4px; border-radius: 2px; }
+
+  @media (max-width: 880px) {
+    .cols { grid-template-columns: 1fr; }
+    .rail { position: static; }
+    .zones { grid-template-columns: 1fr; }
+  }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div class="wrap">
+  <header>
+    <p class="eyebrow">Long Island &middot; buyer-side analysis</p>
+    <h1>Is the cheaper house actually cheaper?</h1>
+    <p class="thesis">
+      A house 25 miles out costs less to buy and more to reach. This ranks listings on what
+      you actually pay each month &mdash; mortgage, property tax, HOA, utilities and the fuel
+      burned getting to work &mdash; and lets you set a different budget ceiling for near and far.
+    </p>
+    <div class="badges">
+      <span class="badge flag">Synthetic demo data</span>
+      <span class="badge" id="badge-count">72 listings</span>
+      <span class="badge">No API key needed</span>
+    </div>
+  </header>
+
+  <section class="verdict" aria-live="polite">
+    <div class="verdict-head">
+      <p class="eyebrow">The tradeoff, at your settings</p>
+      <p class="verdict-line" id="verdict">&nbsp;</p>
+    </div>
+    <div class="zones">
+      <div class="zone">
+        <div class="zone-name">
+          <span class="dot" style="background:var(--accent)"></span>
+          <h3>Near zone</h3>
+          <span class="eyebrow" id="near-label"></span>
+        </div>
+        <div class="zone-big num" id="near-monthly">&mdash;</div>
+        <div class="zone-stat"><span>Listings in budget</span><span class="num" id="near-n">0</span></div>
+        <div class="zone-stat"><span>Median price</span><span class="num" id="near-price">&mdash;</span></div>
+        <div class="zone-stat"><span>Median drive</span><span class="num" id="near-drive">&mdash;</span></div>
+        <div class="zone-stat"><span>Fuel per year</span><span class="num" id="near-fuel">&mdash;</span></div>
+      </div>
+      <div class="zone">
+        <div class="zone-name">
+          <span class="dot" style="background:var(--warn)"></span>
+          <h3>Far zone</h3>
+          <span class="eyebrow" id="far-label"></span>
+        </div>
+        <div class="zone-big num" id="far-monthly">&mdash;</div>
+        <div class="zone-stat"><span>Listings in budget</span><span class="num" id="far-n">0</span></div>
+        <div class="zone-stat"><span>Median price</span><span class="num" id="far-price">&mdash;</span></div>
+        <div class="zone-stat"><span>Median drive</span><span class="num" id="far-drive">&mdash;</span></div>
+        <div class="zone-stat"><span>Fuel per year</span><span class="num" id="far-fuel">&mdash;</span></div>
+      </div>
+    </div>
+  </section>
+
+  <div class="cols">
+    <!-- ================= CONTROL RAIL ================= -->
+    <div class="rail">
+      <div class="card">
+        <div class="card-head">Workplace</div>
+        <div class="card-body">
+          <div class="presets" id="presets"></div>
+          <p class="hint">Or click the map to drop your workplace anywhere.</p>
+          <div class="row2">
+            <div class="field">
+              <label for="lat">Latitude</label>
+              <input type="number" id="lat" step="0.0001" value="40.7493">
+            </div>
+            <div class="field">
+              <label for="lng">Longitude</label>
+              <input type="number" id="lng" step="0.0001" value="-73.6409">
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">Zones &amp; budget</div>
+        <div class="card-body">
+          <div class="field">
+            <label for="radius">Near zone radius <b><span id="radius-v">8</span> mi</b></label>
+            <input type="range" id="radius" min="2" max="30" step="1" value="8">
+          </div>
+          <div class="field">
+            <label for="budget-near">Budget inside that radius</label>
+            <input type="number" id="budget-near" step="10000" value="650000">
+          </div>
+          <div class="field">
+            <label for="budget-far">Budget beyond it</label>
+            <input type="number" id="budget-far" step="10000" value="500000">
+          </div>
+          <div class="field">
+            <label for="maxdist">Hard distance cutoff <b><span id="maxdist-v">30</span> mi</b></label>
+            <input type="range" id="maxdist" min="5" max="60" step="1" value="30">
+          </div>
+          <div class="row2">
+            <div class="field">
+              <label for="beds">Min beds</label>
+              <input type="number" id="beds" min="0" max="6" step="1" value="3">
+            </div>
+            <div class="field">
+              <label for="baths">Min baths</label>
+              <input type="number" id="baths" min="0" max="5" step="1" value="2">
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">Cost assumptions</div>
+        <div class="card-body">
+          <div class="row2">
+            <div class="field">
+              <label for="rate">Rate %</label>
+              <input type="number" id="rate" step="0.01" value="6.23">
+            </div>
+            <div class="field">
+              <label for="down">Down %</label>
+              <input type="number" id="down" step="1" value="10">
+            </div>
+          </div>
+          <div class="row2">
+            <div class="field">
+              <label for="gas">Gas $/gal</label>
+              <input type="number" id="gas" step="0.05" value="4.00">
+            </div>
+            <div class="field">
+              <label for="mpg">Car MPG</label>
+              <input type="number" id="mpg" step="1" value="28">
+            </div>
+          </div>
+          <div class="row2">
+            <div class="field">
+              <label for="days">Days/week</label>
+              <input type="number" id="days" min="0" max="7" step="1" value="5">
+            </div>
+            <div class="field">
+              <label for="weeks">Weeks/year</label>
+              <input type="number" id="weeks" min="1" max="52" step="1" value="50">
+            </div>
+          </div>
+          <div class="field">
+            <label for="util">Utilities estimate $/mo</label>
+            <input type="number" id="util" step="25" value="300">
+          </div>
+          <div class="field">
+            <label for="minmi">Drive time estimate <b><span id="minmi-v">2.5</span> min/mi</b></label>
+            <input type="range" id="minmi" min="1" max="5" step="0.1" value="2.5">
+            <p class="hint">Straight-line distance &times; this factor. The private pipeline
+              replaces it with traffic-aware Google Distance Matrix times.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <span>Score weights</span>
+          <button class="preset" type="button" id="reset-w">Reset</button>
+        </div>
+        <div class="card-body">
+          <div class="field">
+            <label for="w-sqft">Price per sqft <b><span id="w-sqft-v">30</span>%</b></label>
+            <input type="range" id="w-sqft" min="0" max="100" step="5" value="30">
+          </div>
+          <div class="field">
+            <label for="w-month">All-in monthly cost <b><span id="w-month-v">40</span>%</b></label>
+            <input type="range" id="w-month" min="0" max="100" step="5" value="40">
+          </div>
+          <div class="field">
+            <label for="w-drive">Drive to work <b><span id="w-drive-v">20</span>%</b></label>
+            <input type="range" id="w-drive" min="0" max="100" step="5" value="20">
+          </div>
+          <div class="field">
+            <label for="w-lirr">LIRR proximity <b><span id="w-lirr-v">10</span>%</b></label>
+            <input type="range" id="w-lirr" min="0" max="100" step="5" value="10">
+          </div>
+          <p class="hint" id="w-note"></p>
+        </div>
+      </div>
+    </div>
+
+    <!-- ================= RESULTS ================= -->
+    <div style="display:flex; flex-direction:column; gap:20px; min-width:0;">
+      <div class="card map-wrap">
+        <div class="card-head"><span>Where they sit</span><span id="map-note" style="text-transform:none; letter-spacing:0"></span></div>
+        <svg class="map" id="map" viewBox="0 0 820 420" role="img"
+             aria-label="Schematic map of listings around the chosen workplace, coloured by value score."></svg>
+        <div class="legend">
+          <i><span class="dot" style="background:var(--accent)"></span> higher score</i>
+          <i><span class="dot" style="background:var(--surface-2); border:1px solid var(--line)"></span> lower score</i>
+          <i><span class="dot" style="background:var(--bad)"></span> filtered out</i>
+          <i>&#9733; workplace</i>
+          <i>&#9711; near-zone radius</i>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <span>Ranked by value score</span>
+          <span id="rank-count" style="text-transform:none; letter-spacing:0"></span>
+        </div>
+        <div class="table-scroll">
+          <table id="table">
+            <thead>
+              <tr>
+                <th style="cursor:default">#</th>
+                <th data-sort="address">Address</th>
+                <th data-sort="price">Price</th>
+                <th data-sort="ppsf">$/sqft</th>
+                <th data-sort="monthly">All-in / mo</th>
+                <th data-sort="drive">Drive</th>
+                <th data-sort="lirr">LIRR</th>
+                <th data-sort="score">Score</th>
+              </tr>
+            </thead>
+            <tbody id="tbody"></tbody>
+          </table>
+        </div>
+        <div class="diag" id="diag"></div>
+      </div>
+    </div>
+  </div>
+
+  <footer>
+    <p><strong>How the score works.</strong> Each of the four factors is normalised across the
+      listings that pass your filters, lower being better, then combined with your weights.
+      It is a ranking <em>within this set</em>, not an absolute rating &mdash; change the filters and
+      every number moves. A listing with no square footage is scored <em>worst</em> on price per
+      sqft rather than best, which is the honest treatment of missing data.</p>
+    <p><strong>About the data.</strong> These listings are invented. Their prices, square footage
+      and property-tax rates are calibrated to real Long Island distributions &mdash; effective tax
+      runs 1.3&ndash;1.7% of price here, which is why tax outweighs fuel in almost every row &mdash; but
+      no address, listing or agent on this page is real. The scoring engine is the same one the
+      private pipeline runs against live listings.</p>
+    <p class="num" id="stamp"></p>
+  </footer>
+</div>
+
+<script id="demo-data" type="application/json">{"synthetic":true,"note":"Invented listings. Prices, square footage and property-tax rates are calibrated to real Long Island market distributions, but no listing, address or agent here is real.","generated_by":"make_demo_data.py","seed":20260413,"count":72,"listings":[{"id":"demo-045","address":"290 Rosewood Ave","city":"Babylon","state":"NY","full_address":"290 Rosewood Ave, Babylon, NY","price":864999,"beds":3,"baths":4,"sqft":1090,"lot_sqft":7400,"year_built":1973,"style":"Colonial","annual_tax":11220,"hoa_monthly":0,"heating":"Electric, Heat Pump","cooling":"None","basement":"None","garage_spaces":2,"lat":40.6961,"lng":-73.33549,"lirr_station":"Babylon Station","lirr_branch":"Babylon","lirr_drive_mins":4,"walk_score":52,"transit_score":39,"crime_score":3,"flood_factor":1,"days_on_market":1},{"id":"demo-044","address":"325 Orchard Hill Dr","city":"Babylon","state":"NY","full_address":"325 Orchard Hill Dr, Babylon, NY","price":417999,"beds":4,"baths":2,"sqft":0,"lot_sqft":13900,"year_built":2024,"style":"Hi Ranch","annual_tax":5210,"hoa_monthly":0,"heating":"Electric, Heat Pump","cooling":"None","basement":"Partial","garage_spaces":1,"lat":40.69554,"lng":-73.32206,"lirr_station":"Babylon Station","lirr_branch":"Babylon","lirr_drive_mins":13,"walk_score":27,"transit_score":15,"crime_score":3,"flood_factor":1,"days_on_market":9},{"id":"demo-067","address":"505 Eastgate Dr","city":"Babylon","state":"NY","full_address":"505 Eastgate Dr, Babylon, NY","price":629999,"beds":5,"baths":2,"sqft":1420,"lot_sqft":21300,"year_built":1995,"style":"Hi Ranch","annual_tax":7960,"hoa_monthly":0,"heating":"Natural Gas, Forced Air","cooling":"Central Air","basement":"Full, Unfinished","garage_spaces":1,"lat":40.69532,"lng":-73.32908,"lirr_station":"Babylon Station","lirr_branch":"Babylon","lirr_drive_mins":8,"walk_score":50,"transit_score":25,"crime_score":3,"flood_factor":3,"days_on_market":37},{"id":"demo-026","address":"258 Willowbrook Dr","city":"Bay Shore","state":"NY","full_address":"258 Willowbrook Dr, Bay Shore, NY","price":575999,"beds":4,"baths":1,"sqft":1130,"lot_sqft":18800,"year_built":1973,"style":"Hi Ranch","annual_tax":7460,"hoa_monthly":0,"heating":"Electric, Heat Pump","cooling":"None","basement":"Partial","garage_spaces":1,"lat":40.73756,"lng":-73.25333,"lirr_station":"Bay Shore Station","lirr_branch":"Montauk","lirr_drive_mins":2,"walk_score":30,"transit_score":19,"crime_score":5,"flood_factor":2,"days_on_market":26},{"id":"demo-041","address":"337 Elmhurst Ave","city":"Bay Shore","state":"NY","full_address":"337 Elmhurst Ave, Bay Shore, NY","price":417999,"beds":4,"baths":4,"sqft":1460,"lot_sqft":11900,"year_built":1960,"style":"Ranch","annual_tax":7080,"hoa_monthly":310,"heating":"Electric, Heat Pump","cooling":"None","basement":"Crawl Space","garage_spaces":2,"lat":40.72815,"lng":-73.25032,"lirr_station":"Bay Shore Station","lirr_branch":"Montauk","lirr_drive_mins":4,"walk_score":66,"transit_score":46,"crime_score":2,"flood_factor":1,"days_on_market":30},{"id":"demo-057","address":"7 Vineyard Ln","city":"Bay Shore","state":"NY","full_address":"7 Vineyard Ln, Bay Shore, NY","price":543999,"beds":3,"baths":2,"sqft":1980,"lot_sqft":14100,"year_built":1938,"style":"Exp Cape","annual_tax":8350,"hoa_monthly":0,"heating":"Electric, Heat Pump","cooling":"Central Air","basement":"Full, Unfinished","garage_spaces":2,"lat":40.73417,"lng":-73.24757,"lirr_station":"Bay Shore Station","lirr_branch":"Montauk","lirr_drive_mins":3,"walk_score":35,"transit_score":47,"crime_score":3,"flood_factor":2,"days_on_market":14},{"id":"demo-003","address":"80 Thistle Dr","city":"Bay Shore","state":"NY","full_address":"80 Thistle Dr, Bay Shore, NY","price":553999,"beds":4,"baths":2,"sqft":1350,"lot_sqft":20600,"year_built":1937,"style":"Saltbox","annual_tax":8650,"hoa_monthly":0,"heating":"Electric, Heat Pump","cooling":"Central Air","basement":"None","garage_spaces":1,"lat":40.74888,"lng":-73.23329,"lirr_station":"Bay Shore Station","lirr_branch":"Montauk","lirr_drive_mins":13,"walk_score":13,"transit_score":34,"crime_score":4,"flood_factor":1,"days_on_market":6},{"id":"demo-036","address":"894 Juniper Ln","city":"Bay Shore","state":"NY","full_address":"894 Juniper Ln, Bay Shore, NY","price":755999,"beds":2,"baths":2,"sqft":1510,"lot_sqft":8100,"year_built":1961,"style":"Saltbox","annual_tax":11950,"hoa_monthly":0,"heating":"Electric, Heat Pump","cooling":"Central Air","basement":"Full, Finished","garage_spaces":2,"lat":40.72996,"lng":-73.23649,"lirr_station":"Bay Shore Station","lirr_branch":"Montauk","lirr_drive_mins":28,"walk_score":53,"transit_score":37,"crime_score":3,"flood_factor":2,"days_on_market":51},{"id":"demo-062","address":"950 Yardley Ct","city":"Bay Shore","state":"NY","full_address":"950 Yardley Ct, Bay Shore, NY","price":613999,"beds":3,"baths":2,"sqft":1590,"lot_sqft":23700,"year_built":1978,"style":"Exp Cape","annual_tax":9760,"hoa_monthly":0,"heating":"Electric, Heat Pump","cooling":"Wall Unit","basement":"Crawl Space","garage_spaces":2,"lat":40.73265,"lng":-73.23705,"lirr_station":"Bay Shore Station","lirr_branch":"Montauk","lirr_drive_mins":5,"walk_score":37,"transit_score":48,"crime_score":1,"flood_factor":1,"days_on_market":164},{"id":"demo-063","address":"963 Foxglove Ln","city":"Bay Shore","state":"NY","full_address":"963 Foxglove Ln, Bay Shore, NY","price":532999,"beds":3,"baths":2,"sqft":1820,"lot_sqft":16200,"year_built":2011,"style":"Split Level","annual_tax":8660,"hoa_monthly":0,"heating":"Electric, Heat Pump","cooling":"Central Air","basement":"Full, Unfinished","garage_spaces":0,"lat":40.72616,"lng":-73.24361,"lirr_station":"Bay Shore Station","lirr_branch":"Montauk","lirr_drive_mins":5,"walk_score":29,"transit_score":17,"crime_score":4,"flood_factor":3,"days_on_market":1},{"id":"demo-072","address":"113 Clearspring Rd","city":"Franklin Square","state":"NY","full_address":"113 Clearspring Rd, Franklin Square, NY","price":688999,"beds":4,"baths":2,"sqft":2320,"lot_sqft":6200,"year_built":1982,"style":"Exp Cape","annual_tax":10360,"hoa_monthly":240,"heating":"Electric, Heat Pump","cooling":"Wall Unit","basement":"Crawl Space","garage_spaces":2,"lat":40.70314,"lng":-73.67508,"lirr_station":"Floral Park Station","lirr_branch":"Main Line","lirr_drive_mins":2,"walk_score":16,"transit_score":36,"crime_score":2,"flood_factor":2,"days_on_market":52},{"id":"demo-029","address":"281 Garland St","city":"Franklin Square","state":"NY","full_address":"281 Garland St, Franklin Square, NY","price":734999,"beds":2,"baths":3,"sqft":1290,"lot_sqft":7100,"year_built":1944,"style":"Exp Cape","annual_tax":10660,"hoa_monthly":0,"heating":"Oil, Baseboard","cooling":"None","basement":"Full, Finished","garage_spaces":0,"lat":40.69637,"lng":-73.67715,"lirr_station":"Floral Park Station","lirr_branch":"Main Line","lirr_drive_mins":5,"walk_score":64,"transit_score":16,"crime_score":5,"flood_factor":1,"days_on_market":118},{"id":"demo-013","address":"48 Alder Ct","city":"Franklin Square","state":"NY","full_address":"48 Alder Ct, Franklin Square, NY","price":716999,"beds":3,"baths":4,"sqft":1780,"lot_sqft":20800,"year_built":1970,"style":"Hi Ranch","annual_tax":12280,"hoa_monthly":0,"heating":"Electric, Heat Pump","cooling":"Wall Unit","basement":"None","garage_spaces":3,"lat":40.69271,"lng":-73.67929,"lirr_station":"Floral Park Station","lirr_branch":"Main Line","lirr_drive_mins":13,"walk_score":25,"transit_score":39,"crime_score":4,"flood_factor":4,"days_on_market":12},{"id":"demo-025","address":"575 Larkspur Dr","city":"Franklin Square","state":"NY","full_address":"575 Larkspur Dr, Franklin Square, NY","price":690999,"beds":3,"baths":2,"sqft":1360,"lot_sqft":8900,"year_built":1966,"style":"Hi Ranch","annual_tax":9000,"hoa_monthly":0,"heating":"Electric, Heat Pump","cooling":"Central Air","basement":"Crawl Space","garage_spaces":1,"lat":40.70284,"lng":-73.68286,"lirr_station":"Floral Park Station","lirr_branch":"Main Line","lirr_drive_mins":13,"walk_score":50,"transit_score":34,"crime_score":3,"flood_factor":1,"days_on_market":23},{"id":"demo-007","address":"932 Bramble Ct","city":"Franklin Square","state":"NY","full_address":"932 Bramble Ct, Franklin Square, NY","price":655999,"beds":2,"baths":2,"sqft":1430,"lot_sqft":14000,"year_built":1948,"style":"Saltbox","annual_tax":10150,"hoa_monthly":0,"heating":"Electric, Heat Pump","cooling":"Wall Unit","basement":"None","garage_spaces":2,"lat":40.6995,"lng":-73.68849,"lirr_station":"Floral Park Station","lirr_branch":"Main Line","lirr_drive_mins":10,"walk_score":32,"transit_score":41,"crime_score":4,"flood_factor":2,"days_on_market":20},{"id":"demo-002","address":"170 Larkspur Dr","city":"Huntington","state":"NY","full_address":"170 Larkspur Dr, Huntington, NY","price":419999,"beds":4,"baths":1,"sqft":1500,"lot_sqft":9700,"year_built":1945,"style":"Colonial","annual_tax":6450,"hoa_monthly":0,"heating":"Natural Gas, Forced Air","cooling":"Central Air","basement":"Full, Unfinished","garage_spaces":0,"lat":40.86049,"lng":-73.42812,"lirr_station":"Huntington Station","lirr_branch":"Port Jefferson","lirr_drive_mins":6,"walk_score":40,"transit_score":24,"crime_score":3,"flood_factor":2,"days_on_market":26},{"id":"demo-051","address":"200 Fernway Dr","city":"Huntington","state":"NY","full_address":"200 Fernway Dr, Huntington, NY","price":789999,"beds":4,"baths":2,"sqft":2020,"lot_sqft":20400,"year_built":1935,"style":"Ranch","annual_tax":11440,"hoa_monthly":0,"heating":"Oil, Baseboard","cooling":"Central Air","basement":"Full, Unfinished","garage_spaces":2,"lat":40.86204,"lng":-73.40881,"lirr_station":"Huntington Station","lirr_branch":"Port Jefferson","lirr_drive_mins":8,"walk_score":47,"transit_score":27,"crime_score":1,"flood_factor":4,"days_on_market":55},{"id":"demo-061","address":"21 Bramble Ct","city":"Huntington","state":"NY","full_address":"21 Bramble Ct, Huntington, NY","price":917999,"beds":3,"baths":2,"sqft":0,"lot_sqft":13800,"year_built":1970,"style":"Contemporary","annual_tax":15200,"hoa_monthly":0,"heating":"Oil, Baseboard","cooling":"Central Air","basement":"Full, Finished","garage_spaces":3,"lat":40.87878,"lng":-73.40648,"lirr_station":"Huntington Station","lirr_branch":"Port Jefferson","lirr_drive_mins":6,"walk_score":67,"transit_score":40,"crime_score":1,"flood_factor":2,"days_on_market":10},{"id":"demo-037","address":"281 Ivy Hill Rd","city":"Huntington","state":"NY","full_address":"281 Ivy Hill Rd, Huntington, NY","price":877999,"beds":3,"baths":1,"sqft":1980,"lot_sqft":19300,"year_built":2006,"style":"Colonial","annual_tax":12890,"hoa_monthly":0,"heating":"Natural Gas, Forced Air","cooling":"Wall Unit","basement":"Full, Finished","garage_spaces":2,"lat":40.8726,"lng":-73.412,"lirr_station":"Huntington Station","lirr_branch":"Port Jefferson","lirr_drive_mins":5,"walk_score":23,"transit_score":18,"crime_score":2,"flood_factor":4,"days_on_market":58},{"id":"demo-027","address":"287 Thistle Dr","city":"Huntington","state":"NY","full_address":"287 Thistle Dr, Huntington, NY","price":564999,"beds":3,"baths":2,"sqft":0,"lot_sqft":22300,"year_built":2006,"style":"Cape Cod","annual_tax":9690,"hoa_monthly":0,"heating":"Natural Gas, Forced Air","cooling":"Wall Unit","basement":"Full, Unfinished","garage_spaces":2,"lat":40.85453,"lng":-73.41597,"lirr_station":"Huntington Station","lirr_branch":"Port Jefferson","lirr_drive_mins":6,"walk_score":32,"transit_score":47,"crime_score":2,"flood_factor":4,"days_on_market":78},{"id":"demo-043","address":"34 Ashgrove Ln","city":"Huntington","state":"NY","full_address":"34 Ashgrove Ln, Huntington, NY","price":677999,"beds":3,"baths":2,"sqft":2010,"lot_sqft":18500,"year_built":1934,"style":"Ranch","annual_tax":9580,"hoa_monthly":0,"heating":"Natural Gas, Baseboard","cooling":"None","basement":"Partial","garage_spaces":0,"lat":40.87004,"lng":-73.43033,"lirr_station":"Huntington Station","lirr_branch":"Port Jefferson","lirr_drive_mins":3,"walk_score":26,"transit_score":33,"crime_score":5,"flood_factor":1,"days_on_market":67},{"id":"demo-056","address":"426 Thistle Dr","city":"Huntington","state":"NY","full_address":"426 Thistle Dr, Huntington, NY","price":1149999,"beds":3,"baths":2,"sqft":1800,"lot_sqft":22600,"year_built":1929,"style":"Split Level","annual_tax":16410,"hoa_monthly":240,"heating":"Electric, Heat Pump","cooling":"Central Air","basement":"Crawl Space","garage_spaces":2,"lat":40.87262,"lng":-73.41509,"lirr_station":"Huntington Station","lirr_branch":"Port Jefferson","lirr_drive_mins":17,"walk_score":23,"transit_score":48,"crime_score":1,"flood_factor":3,"days_on_market":27},{"id":"demo-012","address":"777 Mulberry Ct","city":"Huntington","state":"NY","full_address":"777 Mulberry Ct, Huntington, NY","price":692999,"beds":3,"baths":4,"sqft":2080,"lot_sqft":15800,"year_built":1958,"style":"Cape Cod","annual_tax":12090,"hoa_monthly":0,"heating":"Natural Gas, Baseboard","cooling":"Central Air","basement":"Crawl Space","garage_spaces":1,"lat":40.86713,"lng":-73.4214,"lirr_station":"Huntington Station","lirr_branch":"Port Jefferson","lirr_drive_mins":5,"walk_score":31,"transit_score":45,"crime_score":1,"flood_factor":2,"days_on_market":57},{"id":"demo-024","address":"783 Thistle Dr","city":"Huntington","state":"NY","full_address":"783 Thistle Dr, Huntington, NY","price":566999,"beds":5,"baths":2,"sqft":1840,"lot_sqft":19500,"year_built":1998,"style":"Colonial","annual_tax":9220,"hoa_monthly":0,"heating":"Oil, Baseboard","cooling":"None","basement":"Partial","garage_spaces":2,"lat":40.87715,"lng":-73.4152,"lirr_station":"Huntington Station","lirr_branch":"Port Jefferson","lirr_drive_mins":8,"walk_score":17,"transit_score":32,"crime_score":5,"flood_factor":4,"days_on_market":3},{"id":"demo-053","address":"97 Juniper Ln","city":"Huntington","state":"NY","full_address":"97 Juniper Ln, Huntington, NY","price":760999,"beds":4,"baths":2,"sqft":1740,"lot_sqft":7800,"year_built":1947,"style":"Contemporary","annual_tax":12060,"hoa_monthly":0,"heating":"Natural Gas, Baseboard","cooling":"Central Air","basement":"Crawl Space","garage_spaces":2,"lat":40.86308,"lng":-73.43099,"lirr_station":"Huntington Station","lirr_branch":"Port Jefferson","lirr_drive_mins":5,"walk_score":63,"transit_score":45,"crime_score":3,"flood_factor":2,"days_on_market":14},{"id":"demo-068","address":"2 Willowbrook Dr","city":"Islip","state":"NY","full_address":"2 Willowbrook Dr, Islip, NY","price":697999,"beds":5,"baths":2,"sqft":1680,"lot_sqft":21300,"year_built":1966,"style":"Hi Ranch","annual_tax":10620,"hoa_monthly":0,"heating":"Oil, Baseboard","cooling":"None","basement":"Crawl Space","garage_spaces":0,"lat":40.72703,"lng":-73.20255,"lirr_station":"Islip Station","lirr_branch":"Montauk","lirr_drive_mins":4,"walk_score":43,"transit_score":37,"crime_score":5,"flood_factor":1,"days_on_market":5},{"id":"demo-066","address":"911 Garland St","city":"Islip","state":"NY","full_address":"911 Garland St, Islip, NY","price":789999,"beds":4,"baths":2,"sqft":1920,"lot_sqft":5900,"year_built":1980,"style":"Exp Cape","annual_tax":12340,"hoa_monthly":0,"heating":"Electric, Heat Pump","cooling":"Central Air","basement":"Full, Unfinished","garage_spaces":2,"lat":40.72643,"lng":-73.20132,"lirr_station":"Islip Station","lirr_branch":"Montauk","lirr_drive_mins":5,"walk_score":72,"transit_score":29,"crime_score":1,"flood_factor":1,"days_on_market":32},{"id":"demo-060","address":"1273 Ashgrove Ln","city":"Kings Park","state":"NY","full_address":"1273 Ashgrove Ln, Kings Park, NY","price":659999,"beds":3,"baths":3,"sqft":1780,"lot_sqft":12800,"year_built":1955,"style":"Saltbox","annual_tax":11780,"hoa_monthly":0,"heating":"Natural Gas, Baseboard","cooling":"Central Air","basement":"Crawl Space","garage_spaces":0,"lat":40.87433,"lng":-73.24877,"lirr_station":"Kings Park Station","lirr_branch":"Port Jefferson","lirr_drive_mins":3,"walk_score":52,"transit_score":25,"crime_score":4,"flood_factor":1,"days_on_market":13},{"id":"demo-005","address":"206 Birchwood Dr","city":"Kings Park","state":"NY","full_address":"206 Birchwood Dr, Kings Park, NY","price":698999,"beds":3,"baths":3,"sqft":1610,"lot_sqft":15900,"year_built":1947,"style":"Colonial","annual_tax":11140,"hoa_monthly":0,"heating":"Natural Gas, Baseboard","cooling":"Central Air","basement":"Partial","garage_spaces":0,"lat":40.89091,"lng":-73.24692,"lirr_station":"Kings Park Station","lirr_branch":"Port Jefferson","lirr_drive_mins":8,"walk_score":65,"transit_score":16,"crime_score":2,"flood_factor":4,"days_on_market":9},{"id":"demo-006","address":"83 Foxglove Ln","city":"Kings Park","state":"NY","full_address":"83 Foxglove Ln, Kings Park, NY","price":593999,"beds":4,"baths":1,"sqft":2020,"lot_sqft":9900,"year_built":2015,"style":"Ranch","annual_tax":7640,"hoa_monthly":0,"heating":"Oil, Baseboard","cooling":"Central Air","basement":"Full, Unfinished","garage_spaces":1,"lat":40.8889,"lng":-73.25169,"lirr_station":"Kings Park Station","lirr_branch":"Port Jefferson","lirr_drive_mins":5,"walk_score":34,"transit_score":29,"crime_score":5,"flood_factor":2,"days_on_market":179},{"id":"demo-020","address":"90 Birchwood Dr","city":"Kings Park","state":"NY","full_address":"90 Birchwood Dr, Kings Park, NY","price":686999,"beds":4,"baths":2,"sqft":1990,"lot_sqft":23900,"year_built":1943,"style":"Contemporary","annual_tax":10490,"hoa_monthly":0,"heating":"Natural Gas, Baseboard","cooling":"None","basement":"Full, Finished","garage_spaces":3,"lat":40.88842,"lng":-73.2462,"lirr_station":"Kings Park Station","lirr_branch":"Port Jefferson","lirr_drive_mins":4,"walk_score":44,"transit_score":46,"crime_score":4,"flood_factor":1,"days_on_market":59},{"id":"demo-011","address":"216 Elmhurst Ave","city":"Massapequa","state":"NY","full_address":"216 Elmhurst Ave, Massapequa, NY","price":694999,"beds":4,"baths":3,"sqft":1950,"lot_sqft":4800,"year_built":1952,"style":"Exp Cape","annual_tax":12510,"hoa_monthly":0,"heating":"Natural Gas, Forced Air","cooling":"None","basement":"Full, Unfinished","garage_spaces":2,"lat":40.67657,"lng":-73.46811,"lirr_station":"Massapequa Station","lirr_branch":"Babylon","lirr_drive_mins":17,"walk_score":12,"transit_score":48,"crime_score":2,"flood_factor":1,"days_on_market":20},{"id":"demo-001","address":"329 Juniper Ln","city":"Massapequa","state":"NY","full_address":"329 Juniper Ln, Massapequa, NY","price":549999,"beds":3,"baths":2,"sqft":1600,"lot_sqft":19300,"year_built":1951,"style":"Contemporary","annual_tax":7620,"hoa_monthly":310,"heating":"Natural Gas, Baseboard","cooling":"Central Air","basement":"Crawl Space","garage_spaces":2,"lat":40.66338,"lng":-73.476,"lirr_station":"Massapequa Station","lirr_branch":"Babylon","lirr_drive_mins":4,"walk_score":15,"transit_score":20,"crime_score":2,"flood_factor":1,"days_on_market":9},{"id":"demo-019","address":"662 Mulberry Ct","city":"Massapequa","state":"NY","full_address":"662 Mulberry Ct, Massapequa, NY","price":723999,"beds":3,"baths":2,"sqft":2160,"lot_sqft":5500,"year_built":1979,"style":"Contemporary","annual_tax":11390,"hoa_monthly":0,"heating":"Natural Gas, Baseboard","cooling":"None","basement":"Crawl Space","garage_spaces":0,"lat":40.67328,"lng":-73.47043,"lirr_station":"Massapequa Station","lirr_branch":"Babylon","lirr_drive_mins":13,"walk_score":27,"transit_score":25,"crime_score":1,"flood_factor":1,"days_on_market":143},{"id":"demo-035","address":"81 Larkspur Dr","city":"Massapequa","state":"NY","full_address":"81 Larkspur Dr, Massapequa, NY","price":928999,"beds":4,"baths":2,"sqft":1980,"lot_sqft":4400,"year_built":1958,"style":"Hi Ranch","annual_tax":12950,"hoa_monthly":0,"heating":"Natural Gas, Baseboard","cooling":"None","basement":"Partial","garage_spaces":1,"lat":40.67916,"lng":-73.47529,"lirr_station":"Massapequa Station","lirr_branch":"Babylon","lirr_drive_mins":6,"walk_score":28,"transit_score":22,"crime_score":4,"flood_factor":1,"days_on_market":10},{"id":"demo-009","address":"861 Nightingale Rd","city":"Massapequa","state":"NY","full_address":"861 Nightingale Rd, Massapequa, NY","price":671999,"beds":3,"baths":2,"sqft":2560,"lot_sqft":16500,"year_built":1967,"style":"Exp Cape","annual_tax":9690,"hoa_monthly":240,"heating":"Natural Gas, Baseboard","cooling":"Wall Unit","basement":"Full, Unfinished","garage_spaces":2,"lat":40.67466,"lng":-73.47139,"lirr_station":"Massapequa Station","lirr_branch":"Babylon","lirr_drive_mins":8,"walk_score":20,"transit_score":28,"crime_score":2,"flood_factor":1,"days_on_market":45},{"id":"demo-018","address":"94 Ivy Hill Rd","city":"Massapequa","state":"NY","full_address":"94 Ivy Hill Rd, Massapequa, NY","price":629999,"beds":4,"baths":2,"sqft":2810,"lot_sqft":16200,"year_built":1969,"style":"Contemporary","annual_tax":8700,"hoa_monthly":0,"heating":"Oil, Baseboard","cooling":"Central Air","basement":"Full, Unfinished","garage_spaces":1,"lat":40.67315,"lng":-73.47249,"lirr_station":"Massapequa Station","lirr_branch":"Babylon","lirr_drive_mins":22,"walk_score":43,"transit_score":38,"crime_score":4,"flood_factor":1,"days_on_market":33},{"id":"demo-069","address":"11 Underhill Rd","city":"Mineola","state":"NY","full_address":"11 Underhill Rd, Mineola, NY","price":827999,"beds":3,"baths":3,"sqft":1030,"lot_sqft":21600,"year_built":1977,"style":"Exp Cape","annual_tax":13440,"hoa_monthly":195,"heating":"Electric, Heat Pump","cooling":"Central Air","basement":"Full, Finished","garage_spaces":0,"lat":40.75644,"lng":-73.63946,"lirr_station":"Mineola Station","lirr_branch":"Main Line","lirr_drive_mins":13,"walk_score":48,"transit_score":36,"crime_score":2,"flood_factor":1,"days_on_market":30},{"id":"demo-032","address":"40 Birchwood Dr","city":"Mineola","state":"NY","full_address":"40 Birchwood Dr, Mineola, NY","price":706999,"beds":5,"baths":1,"sqft":1530,"lot_sqft":17400,"year_built":1952,"style":"Split Level","annual_tax":10190,"hoa_monthly":0,"heating":"Oil, Baseboard","cooling":"Central Air","basement":"Crawl Space","garage_spaces":0,"lat":40.75383,"lng":-73.63655,"lirr_station":"Mineola Station","lirr_branch":"Main Line","lirr_drive_mins":4,"walk_score":39,"transit_score":48,"crime_score":3,"flood_factor":1,"days_on_market":15},{"id":"demo-039","address":"75 Yardley Ct","city":"Mineola","state":"NY","full_address":"75 Yardley Ct, Mineola, NY","price":720999,"beds":5,"baths":2,"sqft":1380,"lot_sqft":9400,"year_built":1994,"style":"Saltbox","annual_tax":9110,"hoa_monthly":0,"heating":"Electric, Heat Pump","cooling":"Central Air","basement":"Full, Finished","garage_spaces":2,"lat":40.7433,"lng":-73.64364,"lirr_station":"Mineola Station","lirr_branch":"Main Line","lirr_drive_mins":6,"walk_score":68,"transit_score":37,"crime_score":2,"flood_factor":1,"days_on_market":42},{"id":"demo-031","address":"1112 Ivy Hill Rd","city":"Patchogue","state":"NY","full_address":"1112 Ivy Hill Rd, Patchogue, NY","price":489999,"beds":3,"baths":2,"sqft":0,"lot_sqft":8600,"year_built":1967,"style":"Cape Cod","annual_tax":6300,"hoa_monthly":0,"heating":"Natural Gas, Baseboard","cooling":"Central Air","basement":"Full, Unfinished","garage_spaces":1,"lat":40.75485,"lng":-73.02013,"lirr_station":"Patchogue Station","lirr_branch":"Montauk","lirr_drive_mins":3,"walk_score":38,"transit_score":35,"crime_score":1,"flood_factor":1,"days_on_market":8},{"id":"demo-021","address":"132 Primrose Ln","city":"Patchogue","state":"NY","full_address":"132 Primrose Ln, Patchogue, NY","price":589999,"beds":2,"baths":2,"sqft":2090,"lot_sqft":16600,"year_built":1972,"style":"Colonial","annual_tax":7440,"hoa_monthly":0,"heating":"Oil, Baseboard","cooling":"Central Air","basement":"Full, Unfinished","garage_spaces":1,"lat":40.77746,"lng":-73.01833,"lirr_station":"Patchogue Station","lirr_branch":"Montauk","lirr_drive_mins":2,"walk_score":41,"transit_score":39,"crime_score":1,"flood_factor":1,"days_on_market":5},{"id":"demo-052","address":"153 Ashgrove Ln","city":"Patchogue","state":"NY","full_address":"153 Ashgrove Ln, Patchogue, NY","price":667999,"beds":5,"baths":2,"sqft":1410,"lot_sqft":6000,"year_built":1932,"style":"Colonial","annual_tax":8150,"hoa_monthly":0,"heating":"Oil, Baseboard","cooling":"Wall Unit","basement":"Full, Finished","garage_spaces":1,"lat":40.7807,"lng":-73.01385,"lirr_station":"Patchogue Station","lirr_branch":"Montauk","lirr_drive_mins":4,"walk_score":70,"transit_score":38,"crime_score":4,"flood_factor":1,"days_on_market":14},{"id":"demo-042","address":"205 Clearspring Rd","city":"Patchogue","state":"NY","full_address":"205 Clearspring Rd, Patchogue, NY","price":589999,"beds":2,"baths":2,"sqft":1250,"lot_sqft":16300,"year_built":1995,"style":"Contemporary","annual_tax":7850,"hoa_monthly":0,"heating":"Natural Gas, Baseboard","cooling":"Central Air","basement":"None","garage_spaces":1,"lat":40.76708,"lng":-73.01402,"lirr_station":"Patchogue Station","lirr_branch":"Montauk","lirr_drive_mins":2,"walk_score":72,"transit_score":19,"crime_score":3,"flood_factor":2,"days_on_market":7},{"id":"demo-008","address":"42 Yardley Ct","city":"Patchogue","state":"NY","full_address":"42 Yardley Ct, Patchogue, NY","price":676999,"beds":4,"baths":2,"sqft":1600,"lot_sqft":9800,"year_built":1956,"style":"Exp Cape","annual_tax":9190,"hoa_monthly":0,"heating":"Oil, Baseboard","cooling":"None","basement":"Crawl Space","garage_spaces":2,"lat":40.76007,"lng":-72.99652,"lirr_station":"Patchogue Station","lirr_branch":"Montauk","lirr_drive_mins":8,"walk_score":44,"transit_score":41,"crime_score":1,"flood_factor":2,"days_on_market":6},{"id":"demo-014","address":"70 Primrose Ln","city":"Patchogue","state":"NY","full_address":"70 Primrose Ln, Patchogue, NY","price":460999,"beds":4,"baths":1,"sqft":1720,"lot_sqft":22100,"year_built":1953,"style":"Colonial","annual_tax":6370,"hoa_monthly":0,"heating":"Natural Gas, Forced Air","cooling":"Central Air","basement":"Partial","garage_spaces":1,"lat":40.76062,"lng":-73.01451,"lirr_station":"Patchogue Station","lirr_branch":"Montauk","lirr_drive_mins":3,"walk_score":47,"transit_score":33,"crime_score":2,"flood_factor":1,"days_on_market":17},{"id":"demo-055","address":"71 Rosewood Ave","city":"Patchogue","state":"NY","full_address":"71 Rosewood Ave, Patchogue, NY","price":607999,"beds":4,"baths":1,"sqft":2750,"lot_sqft":4700,"year_built":2012,"style":"Saltbox","annual_tax":7180,"hoa_monthly":0,"heating":"Electric, Heat Pump","cooling":"Central Air","basement":"Full, Unfinished","garage_spaces":1,"lat":40.77101,"lng":-73.01372,"lirr_station":"Patchogue Station","lirr_branch":"Montauk","lirr_drive_mins":8,"walk_score":27,"transit_score":27,"crime_score":4,"flood_factor":4,"days_on_market":19},{"id":"demo-049","address":"79 Garland St","city":"Patchogue","state":"NY","full_address":"79 Garland St, Patchogue, NY","price":612999,"beds":4,"baths":2,"sqft":2310,"lot_sqft":17400,"year_built":1987,"style":"Cape Cod","annual_tax":9070,"hoa_monthly":0,"heating":"Natural Gas, Baseboard","cooling":"None","basement":"Full, Finished","garage_spaces":2,"lat":40.76812,"lng":-73.01803,"lirr_station":"Patchogue Station","lirr_branch":"Montauk","lirr_drive_mins":6,"walk_score":58,"transit_score":25,"crime_score":1,"flood_factor":1,"days_on_market":69},{"id":"demo-004","address":"945 Alder Ct","city":"Patchogue","state":"NY","full_address":"945 Alder Ct, Patchogue, NY","price":552999,"beds":5,"baths":2,"sqft":1720,"lot_sqft":20700,"year_built":1949,"style":"Saltbox","annual_tax":6790,"hoa_monthly":0,"heating":"Natural Gas, Forced Air","cooling":"None","basement":"Partial","garage_spaces":2,"lat":40.76777,"lng":-73.01528,"lirr_station":"Patchogue Station","lirr_branch":"Montauk","lirr_drive_mins":8,"walk_score":68,"transit_score":45,"crime_score":2,"flood_factor":1,"days_on_market":13},{"id":"demo-046","address":"1081 Elmhurst Ave","city":"Port Jefferson","state":"NY","full_address":"1081 Elmhurst Ave, Port Jefferson, NY","price":546999,"beds":4,"baths":2,"sqft":1270,"lot_sqft":7700,"year_built":1964,"style":"Exp Cape","annual_tax":9150,"hoa_monthly":0,"heating":"Electric, Heat Pump","cooling":"Central Air","basement":"Partial","garage_spaces":0,"lat":40.92914,"lng":-73.07206,"lirr_station":"Port Jefferson Station","lirr_branch":"Port Jefferson","lirr_drive_mins":6,"walk_score":69,"transit_score":43,"crime_score":5,"flood_factor":1,"days_on_market":9},{"id":"demo-050","address":"497 Dogwood Ln","city":"Port Jefferson","state":"NY","full_address":"497 Dogwood Ln, Port Jefferson, NY","price":680999,"beds":4,"baths":2,"sqft":2460,"lot_sqft":12200,"year_built":1980,"style":"Ranch","annual_tax":10550,"hoa_monthly":0,"heating":"Natural Gas, Baseboard","cooling":"Central Air","basement":"Crawl Space","garage_spaces":2,"lat":40.96044,"lng":-73.07079,"lirr_station":"Port Jefferson Station","lirr_branch":"Port Jefferson","lirr_drive_mins":8,"walk_score":16,"transit_score":29,"crime_score":5,"flood_factor":2,"days_on_market":55},{"id":"demo-034","address":"147 Elmhurst Ave","city":"Sayville","state":"NY","full_address":"147 Elmhurst Ave, Sayville, NY","price":615999,"beds":3,"baths":1,"sqft":1600,"lot_sqft":5200,"year_built":1930,"style":"Split Level","annual_tax":10830,"hoa_monthly":0,"heating":"Electric, Heat Pump","cooling":"Central Air","basement":"Crawl Space","garage_spaces":1,"lat":40.73269,"lng":-73.07553,"lirr_station":"Sayville Station","lirr_branch":"Montauk","lirr_drive_mins":4,"walk_score":51,"transit_score":26,"crime_score":4,"flood_factor":1,"days_on_market":3},{"id":"demo-023","address":"227 Vineyard Ln","city":"Sayville","state":"NY","full_address":"227 Vineyard Ln, Sayville, NY","price":561999,"beds":3,"baths":1,"sqft":2750,"lot_sqft":7500,"year_built":1951,"style":"Ranch","annual_tax":8760,"hoa_monthly":0,"heating":"Electric, Heat Pump","cooling":"None","basement":"None","garage_spaces":0,"lat":40.74694,"lng":-73.07692,"lirr_station":"Sayville Station","lirr_branch":"Montauk","lirr_drive_mins":13,"walk_score":55,"transit_score":28,"crime_score":3,"flood_factor":1,"days_on_market":45},{"id":"demo-059","address":"297 Rosewood Ave","city":"Sayville","state":"NY","full_address":"297 Rosewood Ave, Sayville, NY","price":1007999,"beds":4,"baths":4,"sqft":2180,"lot_sqft":10100,"year_built":2009,"style":"Ranch","annual_tax":14920,"hoa_monthly":0,"heating":"Natural Gas, Forced Air","cooling":"Central Air","basement":"Crawl Space","garage_spaces":0,"lat":40.73216,"lng":-73.08472,"lirr_station":"Sayville Station","lirr_branch":"Montauk","lirr_drive_mins":10,"walk_score":24,"transit_score":33,"crime_score":5,"flood_factor":1,"days_on_market":17},{"id":"demo-015","address":"1186 Garland St","city":"Seaford","state":"NY","full_address":"1186 Garland St, Seaford, NY","price":576999,"beds":4,"baths":1,"sqft":1360,"lot_sqft":16600,"year_built":1976,"style":"Saltbox","annual_tax":8710,"hoa_monthly":0,"heating":"Natural Gas, Forced Air","cooling":"Central Air","basement":"Full, Unfinished","garage_spaces":1,"lat":40.66805,"lng":-73.48436,"lirr_station":"Seaford Station","lirr_branch":"Babylon","lirr_drive_mins":2,"walk_score":65,"transit_score":22,"crime_score":1,"flood_factor":3,"days_on_market":13},{"id":"demo-038","address":"51 Kingsbury Ave","city":"Seaford","state":"NY","full_address":"51 Kingsbury Ave, Seaford, NY","price":597999,"beds":3,"baths":4,"sqft":1490,"lot_sqft":21600,"year_built":1976,"style":"Exp Cape","annual_tax":8770,"hoa_monthly":0,"heating":"Natural Gas, Forced Air","cooling":"Wall Unit","basement":"Full, Unfinished","garage_spaces":2,"lat":40.65454,"lng":-73.48725,"lirr_station":"Seaford Station","lirr_branch":"Babylon","lirr_drive_mins":6,"walk_score":52,"transit_score":39,"crime_score":3,"flood_factor":1,"days_on_market":47},{"id":"demo-047","address":"921 Deerfield Ave","city":"Seaford","state":"NY","full_address":"921 Deerfield Ave, Seaford, NY","price":929999,"beds":4,"baths":3,"sqft":0,"lot_sqft":14300,"year_built":1949,"style":"Saltbox","annual_tax":13900,"hoa_monthly":195,"heating":"Oil, Baseboard","cooling":"None","basement":"Crawl Space","garage_spaces":1,"lat":40.65706,"lng":-73.49384,"lirr_station":"Seaford Station","lirr_branch":"Babylon","lirr_drive_mins":5,"walk_score":15,"transit_score":48,"crime_score":4,"flood_factor":1,"days_on_market":97},{"id":"demo-033","address":"99 Hawthorn Ct","city":"Smithtown","state":"NY","full_address":"99 Hawthorn Ct, Smithtown, NY","price":559999,"beds":4,"baths":2,"sqft":1790,"lot_sqft":14500,"year_built":2017,"style":"Contemporary","annual_tax":8530,"hoa_monthly":0,"heating":"Natural Gas, Baseboard","cooling":"Wall Unit","basement":"Crawl Space","garage_spaces":1,"lat":40.86646,"lng":-73.19687,"lirr_station":"Smithtown Station","lirr_branch":"Port Jefferson","lirr_drive_mins":4,"walk_score":57,"transit_score":33,"crime_score":2,"flood_factor":1,"days_on_market":7},{"id":"demo-030","address":"28 Ashgrove Ln","city":"Stony Brook","state":"NY","full_address":"28 Ashgrove Ln, Stony Brook, NY","price":622999,"beds":3,"baths":3,"sqft":2210,"lot_sqft":10400,"year_built":1932,"style":"Colonial","annual_tax":10830,"hoa_monthly":0,"heating":"Oil, Baseboard","cooling":"Wall Unit","basement":"Crawl Space","garage_spaces":2,"lat":40.92963,"lng":-73.14553,"lirr_station":"Stony Brook Station","lirr_branch":"Port Jefferson","lirr_drive_mins":5,"walk_score":45,"transit_score":27,"crime_score":4,"flood_factor":1,"days_on_market":16},{"id":"demo-022","address":"362 Foxglove Ln","city":"Stony Brook","state":"NY","full_address":"362 Foxglove Ln, Stony Brook, NY","price":807999,"beds":3,"baths":3,"sqft":2200,"lot_sqft":15000,"year_built":1976,"style":"Saltbox","annual_tax":12840,"hoa_monthly":0,"heating":"Oil, Baseboard","cooling":"Wall Unit","basement":"Crawl Space","garage_spaces":3,"lat":40.92994,"lng":-73.15383,"lirr_station":"Stony Brook Station","lirr_branch":"Port Jefferson","lirr_drive_mins":8,"walk_score":21,"transit_score":21,"crime_score":4,"flood_factor":1,"days_on_market":22},{"id":"demo-017","address":"734 Bramble Ct","city":"Stony Brook","state":"NY","full_address":"734 Bramble Ct, Stony Brook, NY","price":810999,"beds":4,"baths":2,"sqft":1590,"lot_sqft":16900,"year_built":1961,"style":"Split Level","annual_tax":14850,"hoa_monthly":0,"heating":"Natural Gas, Baseboard","cooling":"Wall Unit","basement":"Crawl Space","garage_spaces":1,"lat":40.92606,"lng":-73.13392,"lirr_station":"Stony Brook Station","lirr_branch":"Port Jefferson","lirr_drive_mins":13,"walk_score":37,"transit_score":30,"crime_score":5,"flood_factor":1,"days_on_market":4},{"id":"demo-040","address":"808 Kingsbury Ave","city":"Stony Brook","state":"NY","full_address":"808 Kingsbury Ave, Stony Brook, NY","price":704999,"beds":4,"baths":1,"sqft":3580,"lot_sqft":12500,"year_built":1929,"style":"Hi Ranch","annual_tax":11100,"hoa_monthly":0,"heating":"Oil, Baseboard","cooling":"Central Air","basement":"None","garage_spaces":2,"lat":40.92746,"lng":-73.13944,"lirr_station":"Stony Brook Station","lirr_branch":"Port Jefferson","lirr_drive_mins":3,"walk_score":55,"transit_score":19,"crime_score":2,"flood_factor":1,"days_on_market":1},{"id":"demo-065","address":"1049 Nightingale Rd","city":"Valley Stream","state":"NY","full_address":"1049 Nightingale Rd, Valley Stream, NY","price":642999,"beds":3,"baths":1,"sqft":2220,"lot_sqft":18800,"year_built":1948,"style":"Exp Cape","annual_tax":10630,"hoa_monthly":0,"heating":"Oil, Baseboard","cooling":"Central Air","basement":"Crawl Space","garage_spaces":2,"lat":40.65894,"lng":-73.71116,"lirr_station":"Valley Stream Station","lirr_branch":"Babylon","lirr_drive_mins":4,"walk_score":49,"transit_score":33,"crime_score":2,"flood_factor":1,"days_on_market":2},{"id":"demo-058","address":"1105 Foxglove Ln","city":"Valley Stream","state":"NY","full_address":"1105 Foxglove Ln, Valley Stream, NY","price":854999,"beds":4,"baths":3,"sqft":1740,"lot_sqft":9600,"year_built":1994,"style":"Exp Cape","annual_tax":15380,"hoa_monthly":0,"heating":"Oil, Baseboard","cooling":"Central Air","basement":"Partial","garage_spaces":3,"lat":40.66277,"lng":-73.70546,"lirr_station":"Valley Stream Station","lirr_branch":"Babylon","lirr_drive_mins":6,"walk_score":42,"transit_score":44,"crime_score":5,"flood_factor":4,"days_on_market":60},{"id":"demo-054","address":"1290 Ashgrove Ln","city":"Valley Stream","state":"NY","full_address":"1290 Ashgrove Ln, Valley Stream, NY","price":666999,"beds":4,"baths":3,"sqft":1950,"lot_sqft":4600,"year_built":1994,"style":"Ranch","annual_tax":11000,"hoa_monthly":0,"heating":"Natural Gas, Forced Air","cooling":"Central Air","basement":"Crawl Space","garage_spaces":2,"lat":40.65855,"lng":-73.70403,"lirr_station":"Valley Stream Station","lirr_branch":"Babylon","lirr_drive_mins":4,"walk_score":16,"transit_score":15,"crime_score":1,"flood_factor":1,"days_on_market":31},{"id":"demo-064","address":"157 Juniper Ln","city":"Valley Stream","state":"NY","full_address":"157 Juniper Ln, Valley Stream, NY","price":647999,"beds":4,"baths":2,"sqft":0,"lot_sqft":10400,"year_built":2005,"style":"Contemporary","annual_tax":11870,"hoa_monthly":0,"heating":"Oil, Baseboard","cooling":"Wall Unit","basement":"Full, Unfinished","garage_spaces":1,"lat":40.66386,"lng":-73.70187,"lirr_station":"Valley Stream Station","lirr_branch":"Babylon","lirr_drive_mins":5,"walk_score":43,"transit_score":24,"crime_score":4,"flood_factor":1,"days_on_market":57},{"id":"demo-028","address":"199 Orchard Hill Dr","city":"Valley Stream","state":"NY","full_address":"199 Orchard Hill Dr, Valley Stream, NY","price":717999,"beds":3,"baths":4,"sqft":1720,"lot_sqft":22200,"year_built":2004,"style":"Colonial","annual_tax":11790,"hoa_monthly":0,"heating":"Electric, Heat Pump","cooling":"Central Air","basement":"None","garage_spaces":1,"lat":40.66121,"lng":-73.71284,"lirr_station":"Valley Stream Station","lirr_branch":"Babylon","lirr_drive_mins":8,"walk_score":71,"transit_score":36,"crime_score":2,"flood_factor":1,"days_on_market":10},{"id":"demo-016","address":"992 Thistle Dr","city":"Valley Stream","state":"NY","full_address":"992 Thistle Dr, Valley Stream, NY","price":925999,"beds":3,"baths":4,"sqft":1980,"lot_sqft":23700,"year_built":1989,"style":"Split Level","annual_tax":13420,"hoa_monthly":0,"heating":"Electric, Heat Pump","cooling":"None","basement":"None","garage_spaces":2,"lat":40.65314,"lng":-73.70924,"lirr_station":"Valley Stream Station","lirr_branch":"Babylon","lirr_drive_mins":5,"walk_score":28,"transit_score":21,"crime_score":5,"flood_factor":2,"days_on_market":18},{"id":"demo-071","address":"1035 Rosewood Ave","city":"Westbury","state":"NY","full_address":"1035 Rosewood Ave, Westbury, NY","price":408999,"beds":4,"baths":2,"sqft":1980,"lot_sqft":14300,"year_built":1954,"style":"Exp Cape","annual_tax":6260,"hoa_monthly":0,"heating":"Natural Gas, Baseboard","cooling":"Central Air","basement":"Full, Unfinished","garage_spaces":3,"lat":40.75792,"lng":-73.5958,"lirr_station":"Westbury Station","lirr_branch":"Main Line","lirr_drive_mins":4,"walk_score":51,"transit_score":20,"crime_score":2,"flood_factor":1,"days_on_market":191},{"id":"demo-048","address":"228 Thistle Dr","city":"Westbury","state":"NY","full_address":"228 Thistle Dr, Westbury, NY","price":710999,"beds":3,"baths":2,"sqft":2240,"lot_sqft":18900,"year_built":1951,"style":"Contemporary","annual_tax":12600,"hoa_monthly":0,"heating":"Natural Gas, Baseboard","cooling":"Central Air","basement":"Partial","garage_spaces":1,"lat":40.76344,"lng":-73.58834,"lirr_station":"Westbury Station","lirr_branch":"Main Line","lirr_drive_mins":8,"walk_score":35,"transit_score":37,"crime_score":1,"flood_factor":1,"days_on_market":57},{"id":"demo-070","address":"782 Eastgate Dr","city":"Westbury","state":"NY","full_address":"782 Eastgate Dr, Westbury, NY","price":867999,"beds":4,"baths":2,"sqft":1810,"lot_sqft":20900,"year_built":1966,"style":"Colonial","annual_tax":12420,"hoa_monthly":0,"heating":"Natural Gas, Forced Air","cooling":"None","basement":"None","garage_spaces":0,"lat":40.75883,"lng":-73.59031,"lirr_station":"Westbury Station","lirr_branch":"Main Line","lirr_drive_mins":10,"walk_score":17,"transit_score":25,"crime_score":2,"flood_factor":1,"days_on_market":32},{"id":"demo-010","address":"80 Bramble Ct","city":"Westbury","state":"NY","full_address":"80 Bramble Ct, Westbury, NY","price":1078999,"beds":3,"baths":3,"sqft":1660,"lot_sqft":18200,"year_built":1989,"style":"Split Level","annual_tax":14740,"hoa_monthly":0,"heating":"Electric, Heat Pump","cooling":"None","basement":"None","garage_spaces":2,"lat":40.74946,"lng":-73.59334,"lirr_station":"Westbury Station","lirr_branch":"Main Line","lirr_drive_mins":2,"walk_score":71,"transit_score":18,"crime_score":2,"flood_factor":3,"days_on_market":7}]}</script>
+<script>
+(function () {
+  "use strict";
+
+  var DATA = JSON.parse(document.getElementById("demo-data").textContent);
+  var LISTINGS = DATA.listings;
+
+  // Well-known public employment centres, spread west to east, so no single
+  // default implies anything about whoever built this.
+  var PRESETS = [
+    { name: "Mineola",     lat: 40.7493, lng: -73.6409 },
+    { name: "Garden City", lat: 40.7268, lng: -73.6343 },
+    { name: "Uniondale",   lat: 40.7265, lng: -73.5918 },
+    { name: "Hauppauge",   lat: 40.8176, lng: -73.2065 },
+    { name: "Stony Brook", lat: 40.9257, lng: -73.1409 },
+    { name: "Penn Sta.",   lat: 40.7506, lng: -73.9935 }
+  ];
+
+  var S = {
+    lat: 40.7493, lng: -73.6409,
+    radius: 8, budgetNear: 650000, budgetFar: 500000,
+    maxdist: 30, beds: 3, baths: 2,
+    rate: 6.23, down: 10, gas: 4.0, mpg: 28, days: 5, weeks: 50,
+    util: 300, minmi: 2.5,
+    wSqft: 30, wMonth: 40, wDrive: 20, wLirr: 10,
+    sortKey: "score", sortDir: -1, openId: null
+  };
+
+  // ---------- maths ----------
+  var MI_PER_DEG_LAT = 69.0;
+
+  function haversine(lat1, lon1, lat2, lon2) {
+    var R = 3958.8, rad = Math.PI / 180;
+    var p1 = lat1 * rad, p2 = lat2 * rad;
+    var dp = (lat2 - lat1) * rad, dl = (lon2 - lon1) * rad;
+    var a = Math.sin(dp / 2) * Math.sin(dp / 2) +
+            Math.cos(p1) * Math.cos(p2) * Math.sin(dl / 2) * Math.sin(dl / 2);
+    return R * 2 * Math.asin(Math.sqrt(a));
+  }
+
+  function monthlyPayment(price, ratePct, termYears, downPct) {
+    var principal = price * (1 - downPct / 100);
+    var r = (ratePct / 100) / 12, n = termYears * 12;
+    if (r <= 0) return principal / n;
+    return principal * (r * Math.pow(1 + r, n)) / (Math.pow(1 + r, n) - 1);
+  }
+
+  function median(arr) {
+    if (!arr.length) return null;
+    var a = arr.slice().sort(function (x, y) { return x - y; });
+    var m = Math.floor(a.length / 2);
+    return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2;
+  }
+
+  // Lower input = higher score. Missing data is filled with the WORST observed
+  // value, so a listing with no sqft scores 0 on that factor, never 100.
+  function normLow(values) {
+    var known = values.filter(function (v) { return v !== null && isFinite(v); });
+    if (!known.length) return values.map(function () { return 50; });
+    var worst = Math.max.apply(null, known);
+    var filled = values.map(function (v) { return (v === null || !isFinite(v)) ? worst : v; });
+    var lo = Math.min.apply(null, filled), hi = Math.max.apply(null, filled);
+    if (hi === lo) return filled.map(function () { return 50; });
+    return filled.map(function (v) { return 100 * (1 - (v - lo) / (hi - lo)); });
+  }
+
+  // ---------- the model ----------
+  function compute() {
+    var skipped = { beds_baths: 0, too_far: 0, over_budget: 0 };
+    var costPerMile = S.gas / Math.max(1, S.mpg);
+    var rows = [];
+
+    LISTINGS.forEach(function (L) {
+      var dist = haversine(L.lat, L.lng, S.lat, S.lng);
+      var zone = dist <= S.radius ? "NEAR" : "FAR";
+      var cap  = zone === "NEAR" ? S.budgetNear : S.budgetFar;
+
+      var r = {
+        id: L.id, raw: L, dist: dist, zone: zone, cap: cap,
+        kept: true, reason: null
+      };
+
+      if (L.beds < S.beds || L.baths < S.baths) { r.kept = false; r.reason = "beds_baths"; }
+      else if (dist > S.maxdist)                { r.kept = false; r.reason = "too_far"; }
+      else if (L.price > cap)                   { r.kept = false; r.reason = "over_budget"; }
+      if (!r.kept) skipped[r.reason]++;
+
+      // Costs are computed for every listing so the map can still place it.
+      r.driveMins   = Math.round(dist * S.minmi);
+      r.annualFuel  = dist * 2 * S.days * S.weeks * costPerMile;
+      r.monthlyFuel = r.annualFuel / 12;
+      r.mortgage    = monthlyPayment(L.price, S.rate, 30, S.down);
+      r.tax         = L.annual_tax / 12;
+      r.hoa         = L.hoa_monthly || 0;
+      r.monthly     = r.mortgage + r.tax + r.hoa + r.monthlyFuel + S.util;
+      r.ppsf        = L.sqft > 0 ? L.price / L.sqft : null;
+      r.lirr        = L.lirr_drive_mins;
+      rows.push(r);
+    });
+
+    var kept = rows.filter(function (r) { return r.kept; });
+
+    // Weights are normalised, so any combination of sliders is valid.
+    var wsum = S.wSqft + S.wMonth + S.wDrive + S.wLirr;
+    var w = wsum > 0
+      ? { s: S.wSqft / wsum, m: S.wMonth / wsum, d: S.wDrive / wsum, l: S.wLirr / wsum }
+      : { s: 0.25, m: 0.25, d: 0.25, l: 0.25 };
+
+    var nSqft  = normLow(kept.map(function (r) { return r.ppsf; }));
+    var nMonth = normLow(kept.map(function (r) { return r.monthly; }));
+    var nDrive = normLow(kept.map(function (r) { return r.driveMins; }));
+    var nLirr  = normLow(kept.map(function (r) { return r.lirr; }));
+
+    kept.forEach(function (r, i) {
+      r.nSqft = nSqft[i]; r.nMonth = nMonth[i]; r.nDrive = nDrive[i]; r.nLirr = nLirr[i];
+      r.score = Math.round((w.s * nSqft[i] + w.m * nMonth[i] +
+                            w.d * nDrive[i] + w.l * nLirr[i]) * 10) / 10;
+    });
+
+    return { all: rows, kept: kept, skipped: skipped, weights: w };
+  }
+
+  // ---------- formatting ----------
+  function money0(v) {
+    if (v === null || !isFinite(v)) return "—";
+    return "$" + Math.round(v).toLocaleString("en-US");
+  }
+  function esc(s) {
+    return String(s).replace(/[&<>"]/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c];
+    });
+  }
+
+  // ---------- render: verdict ----------
+  function renderVerdict(M) {
+    var near = M.kept.filter(function (r) { return r.zone === "NEAR"; });
+    var far  = M.kept.filter(function (r) { return r.zone === "FAR"; });
+
+    document.getElementById("near-label").textContent = "≤ " + S.radius + " mi · ≤ " + money0(S.budgetNear);
+    document.getElementById("far-label").textContent  = "> " + S.radius + " mi · ≤ " + money0(S.budgetFar);
+
+    function fill(prefix, set) {
+      var mMonthly = median(set.map(function (r) { return r.monthly; }));
+      document.getElementById(prefix + "-monthly").innerHTML =
+        set.length ? money0(mMonthly) + " <small>/ mo median</small>" : "—";
+      document.getElementById(prefix + "-n").textContent = set.length;
+      document.getElementById(prefix + "-price").textContent = money0(median(set.map(function (r) { return r.raw.price; })));
+      var d = median(set.map(function (r) { return r.driveMins; }));
+      document.getElementById(prefix + "-drive").textContent = d === null ? "—" : d + " min";
+      document.getElementById(prefix + "-fuel").textContent = money0(median(set.map(function (r) { return r.annualFuel; })));
+      return mMonthly;
+    }
+
+    var nearM = fill("near", near);
+    var farM  = fill("far", far);
+
+    var el = document.getElementById("verdict");
+    if (!near.length && !far.length) {
+      el.innerHTML = "Nothing clears these filters. Loosen the budget or the bedroom minimum.";
+    } else if (!near.length) {
+      el.innerHTML = "Nothing inside " + S.radius + " mi fits a " + money0(S.budgetNear) +
+        " budget, so every option here is a <strong>longer commute</strong>.";
+    } else if (!far.length) {
+      el.innerHTML = "Nothing beyond " + S.radius + " mi fits a " + money0(S.budgetFar) +
+        " budget &mdash; the far zone saves nothing at this ceiling.";
+    } else {
+      var gap = nearM - farM;
+      var pGap = median(near.map(function (r) { return r.raw.price; })) - median(far.map(function (r) { return r.raw.price; }));
+      if (gap > 0) {
+        el.innerHTML = "Moving out past " + S.radius + " mi saves <strong>" + money0(gap) +
+          "/mo</strong> all-in on a " + money0(pGap) + " cheaper house, and costs " +
+          "<strong>" + (median(far.map(function (r) { return r.driveMins; })) - median(near.map(function (r) { return r.driveMins; }))) +
+          " more minutes</strong> each way.";
+      } else {
+        el.innerHTML = "The far zone is <strong>" + money0(-gap) + "/mo more expensive</strong> all-in " +
+          "despite cheaper asking prices &mdash; taxes and fuel cancel the discount.";
+      }
+    }
+  }
+
+  // ---------- render: map ----------
+  function renderMap(M) {
+    var svg = document.getElementById("map");
+    var W = 820, H = 420, PAD = 34;
+
+    var lats = M.all.map(function (r) { return r.raw.lat; }).concat([S.lat]);
+    var lngs = M.all.map(function (r) { return r.raw.lng; }).concat([S.lng]);
+    var minLat = Math.min.apply(null, lats), maxLat = Math.max.apply(null, lats);
+    var minLng = Math.min.apply(null, lngs), maxLng = Math.max.apply(null, lngs);
+
+    var midLat = (minLat + maxLat) / 2;
+    var miPerDegLng = MI_PER_DEG_LAT * Math.cos(midLat * Math.PI / 180);
+
+    // One scale for both axes, so the radius ring is a true circle.
+    var spanX = Math.max(0.01, (maxLng - minLng) * miPerDegLng);
+    var spanY = Math.max(0.01, (maxLat - minLat) * MI_PER_DEG_LAT);
+    var pxPerMi = Math.min((W - 2 * PAD) / spanX, (H - 2 * PAD) / spanY);
+    var cx = (minLng + maxLng) / 2, cy = (minLat + maxLat) / 2;
+
+    function px(lng) { return W / 2 + (lng - cx) * miPerDegLng * pxPerMi; }
+    function py(lat) { return H / 2 - (lat - cy) * MI_PER_DEG_LAT * pxPerMi; }
+
+    svg.__inv = function (x, y) {
+      return {
+        lng: cx + (x - W / 2) / (miPerDegLng * pxPerMi),
+        lat: cy - (y - H / 2) / (MI_PER_DEG_LAT * pxPerMi)
+      };
+    };
+
+    var ox = px(S.lng), oy = py(S.lat);
+    var parts = [];
+
+    // near-zone ring
+    parts.push('<circle cx="' + ox.toFixed(1) + '" cy="' + oy.toFixed(1) + '" r="' +
+      (S.radius * pxPerMi).toFixed(1) + '" fill="var(--accent)" fill-opacity="0.07" ' +
+      'stroke="var(--accent)" stroke-opacity="0.5" stroke-dasharray="4 4" stroke-width="1.2"/>');
+
+    // town labels, placed at each town's mean position
+    var towns = {};
+    M.all.forEach(function (r) {
+      var t = towns[r.raw.city] || (towns[r.raw.city] = { la: 0, ln: 0, n: 0 });
+      t.la += r.raw.lat; t.ln += r.raw.lng; t.n++;
+    });
+    Object.keys(towns).forEach(function (name) {
+      var t = towns[name];
+      parts.push('<text x="' + px(t.ln / t.n).toFixed(1) + '" y="' + (py(t.la / t.n) - 13).toFixed(1) +
+        '" text-anchor="middle" font-size="10.5" fill="var(--muted)" ' +
+        'font-family="Barlow Semi Condensed, sans-serif" letter-spacing="0.08em" ' +
+        'style="text-transform:uppercase">' + esc(name.toUpperCase()) + '</text>');
+    });
+
+    // listings
+    M.all.forEach(function (r) {
+      var x = px(r.raw.lng).toFixed(1), y = py(r.raw.lat).toFixed(1);
+      if (!r.kept) {
+        parts.push('<circle cx="' + x + '" cy="' + y + '" r="2.6" fill="var(--bad)" fill-opacity="0.32"/>');
+      } else {
+        var t = Math.max(0, Math.min(1, r.score / 100));
+        var rad = 3.6 + t * 4.2;
+        var sel = r.id === S.openId;
+        parts.push('<circle cx="' + x + '" cy="' + y + '" r="' + (sel ? rad + 2.5 : rad).toFixed(1) +
+          '" fill="var(--accent)" fill-opacity="' + (0.2 + t * 0.75).toFixed(2) +
+          '" stroke="' + (sel ? 'var(--ink)' : 'var(--accent)') +
+          '" stroke-width="' + (sel ? '2.4' : '0.9') + '"><title>' +
+          esc(r.raw.address + ", " + r.raw.city + " — score " + r.score) + '</title></circle>');
+      }
+    });
+
+    // workplace star
+    parts.push('<g transform="translate(' + ox.toFixed(1) + ',' + oy.toFixed(1) + ')">' +
+      '<circle r="9" fill="var(--surface)" stroke="var(--ink)" stroke-width="1.6"/>' +
+      '<text y="4.2" text-anchor="middle" font-size="12" fill="var(--ink)">★</text></g>');
+
+    svg.innerHTML = parts.join("");
+    document.getElementById("map-note").textContent =
+      Math.round(spanX) + " mi across · click to move workplace";
+  }
+
+  // ---------- render: table ----------
+  var SORTERS = {
+    address: function (r) { return r.raw.city + " " + r.raw.address; },
+    price:   function (r) { return r.raw.price; },
+    ppsf:    function (r) { return r.ppsf === null ? Infinity : r.ppsf; },
+    monthly: function (r) { return r.monthly; },
+    drive:   function (r) { return r.driveMins; },
+    lirr:    function (r) { return r.lirr; },
+    score:   function (r) { return r.score; }
+  };
+
+  function renderTable(M) {
+    var tb = document.getElementById("tbody");
+    var rows = M.kept.slice();
+    var f = SORTERS[S.sortKey] || SORTERS.score;
+    rows.sort(function (a, b) {
+      var x = f(a), y = f(b);
+      if (typeof x === "string") return S.sortDir * x.localeCompare(y);
+      return S.sortDir * (x - y);
+    });
+
+    document.getElementById("rank-count").textContent =
+      rows.length + " of " + LISTINGS.length + " pass";
+
+    if (!rows.length) {
+      tb.innerHTML = '<tr><td colspan="8" class="empty">No listing clears these filters. ' +
+        'Try a higher budget, a wider radius, or fewer bedrooms.</td></tr>';
+      renderDiag(M);
+      return;
+    }
+
+    var html = "";
+    rows.forEach(function (r, i) {
+      var zc = r.zone === "NEAR" ? "var(--accent)" : "var(--warn)";
+      var open = r.id === S.openId;
+      html += '<tr tabindex="0" data-id="' + r.id + '"' + (open ? ' class="open"' : '') + '>' +
+        '<td class="rank num">' + (i + 1) + '</td>' +
+        '<td class="addr">' + esc(r.raw.address) +
+          '<small>' + esc(r.raw.city) + ' · ' + r.raw.beds + 'bd/' + r.raw.baths + 'ba · ' +
+          (r.raw.sqft ? r.raw.sqft.toLocaleString("en-US") + ' sqft' : 'sqft unknown') + ' · ' +
+          '<span class="zpill" style="color:' + zc + ';border-color:' + zc + '">' + r.zone + '</span></small></td>' +
+        '<td class="num">' + money0(r.raw.price) + '</td>' +
+        '<td class="num">' + (r.ppsf === null ? '<span class="nodata">n/a</span>' : money0(r.ppsf)) + '</td>' +
+        '<td class="num">' + money0(r.monthly) + '</td>' +
+        '<td class="num">' + r.driveMins + ' min</td>' +
+        '<td class="num">' + r.lirr + ' min</td>' +
+        '<td class="num score" style="color:' + (r.score >= 60 ? 'var(--good)' : r.score >= 40 ? 'var(--ink)' : 'var(--muted)') + '">' +
+          r.score.toFixed(1) + '</td></tr>';
+
+      if (open) html += '<tr><td class="detail" colspan="8">' + breakdown(r, M) + '</td></tr>';
+    });
+    tb.innerHTML = html;
+    renderDiag(M);
+  }
+
+  function bar(label, value, weight) {
+    return '<div class="bk-row"><span>' + label + '</span><span class="num">' +
+      value.toFixed(0) + ' &times; ' + Math.round(weight * 100) + '%</span></div>' +
+      '<div class="bar"><i style="width:' + Math.max(0, Math.min(100, value)).toFixed(1) + '%"></i></div>';
+  }
+
+  function breakdown(r, M) {
+    var L = r.raw, w = M.weights;
+    var effTax = L.annual_tax / L.price * 100;
+    return '<div class="breakdown">' +
+      '<div class="bk"><h4>Monthly, all in</h4>' +
+        '<div class="bk-row"><span>Mortgage</span><span class="num">' + money0(r.mortgage) + '</span></div>' +
+        '<div class="bk-row"><span>Property tax</span><span class="num">' + money0(r.tax) + '</span></div>' +
+        '<div class="bk-row"><span>HOA</span><span class="num">' + money0(r.hoa) + '</span></div>' +
+        '<div class="bk-row"><span>Fuel to work</span><span class="num">' + money0(r.monthlyFuel) + '</span></div>' +
+        '<div class="bk-row"><span>Utilities (est.)</span><span class="num">' + money0(S.util) + '</span></div>' +
+        '<div class="bk-row total"><span>Total</span><span class="num">' + money0(r.monthly) + '</span></div></div>' +
+
+      '<div class="bk"><h4>Score components</h4>' +
+        bar("Price / sqft", r.nSqft, w.s) +
+        bar("All-in monthly", r.nMonth, w.m) +
+        bar("Drive to work", r.nDrive, w.d) +
+        bar("LIRR proximity", r.nLirr, w.l) +
+        (L.sqft ? '' : '<p class="nodata" style="margin:7px 0 0">No sqft reported, so this ' +
+          'listing takes the worst price-per-sqft score rather than the best.</p>') +
+      '</div>' +
+
+      '<div class="bk"><h4>The commute</h4>' +
+        '<div class="bk-row"><span>Straight line</span><span class="num">' + r.dist.toFixed(1) + ' mi</span></div>' +
+        '<div class="bk-row"><span>Estimated drive</span><span class="num">' + r.driveMins + ' min</span></div>' +
+        '<div class="bk-row"><span>Fuel per year</span><span class="num">' + money0(r.annualFuel) + '</span></div>' +
+        '<div class="bk-row"><span>Nearest station</span><span>' + esc(L.lirr_station) + '</span></div>' +
+        '<div class="bk-row"><span>Branch</span><span>' + esc(L.lirr_branch) + '</span></div>' +
+        '<div class="bk-row"><span>Drive to station</span><span class="num">' + L.lirr_drive_mins + ' min</span></div></div>' +
+
+      '<div class="bk"><h4>The house</h4>' +
+        '<div class="bk-row"><span>Built</span><span class="num">' + L.year_built + '</span></div>' +
+        '<div class="bk-row"><span>Style</span><span>' + esc(L.style) + '</span></div>' +
+        '<div class="bk-row"><span>Lot</span><span class="num">' + L.lot_sqft.toLocaleString("en-US") + ' sqft</span></div>' +
+        '<div class="bk-row"><span>Heating</span><span>' + esc(L.heating) + '</span></div>' +
+        '<div class="bk-row"><span>Basement</span><span>' + esc(L.basement) + '</span></div>' +
+        '<div class="bk-row"><span>Garage</span><span class="num">' + L.garage_spaces + ' car</span></div>' +
+        '<div class="bk-row"><span>Effective tax rate</span><span class="num">' + effTax.toFixed(2) + '%</span></div>' +
+        '<div class="bk-row"><span>Days listed</span><span class="num">' + L.days_on_market + '</span></div></div>' +
+    '</div>';
+  }
+
+  function renderDiag(M) {
+    var s = M.skipped;
+    document.getElementById("diag").innerHTML =
+      '<span>Filtered out:</span>' +
+      '<span>under ' + S.beds + 'bd/' + S.baths + 'ba <b>' + s.beds_baths + '</b></span>' +
+      '<span>past ' + S.maxdist + ' mi <b>' + s.too_far + '</b></span>' +
+      '<span>over zone budget <b>' + s.over_budget + '</b></span>';
+  }
+
+  // ---------- wiring ----------
+  function render() {
+    var M = compute();
+    renderVerdict(M);
+    renderMap(M);
+    renderTable(M);
+  }
+
+  function num(id) { return parseFloat(document.getElementById(id).value); }
+
+  function syncPresets() {
+    document.querySelectorAll("#presets .preset").forEach(function (b) {
+      var p = PRESETS[+b.dataset.i];
+      var on = Math.abs(p.lat - S.lat) < 0.0005 && Math.abs(p.lng - S.lng) < 0.0005;
+      b.setAttribute("aria-pressed", on ? "true" : "false");
+    });
+  }
+
+  function setOffice(lat, lng) {
+    S.lat = Math.round(lat * 10000) / 10000;
+    S.lng = Math.round(lng * 10000) / 10000;
+    document.getElementById("lat").value = S.lat;
+    document.getElementById("lng").value = S.lng;
+    syncPresets();
+    render();
+  }
+
+  // presets
+  var pc = document.getElementById("presets");
+  PRESETS.forEach(function (p, i) {
+    var b = document.createElement("button");
+    b.type = "button"; b.className = "preset"; b.textContent = p.name;
+    b.dataset.i = i; b.setAttribute("aria-pressed", "false");
+    b.addEventListener("click", function () { setOffice(p.lat, p.lng); });
+    pc.appendChild(b);
+  });
+
+  // numeric + range inputs
+  var BINDINGS = [
+    ["lat", "lat", null], ["lng", "lng", null],
+    ["radius", "radius", "radius-v"], ["budget-near", "budgetNear", null],
+    ["budget-far", "budgetFar", null], ["maxdist", "maxdist", "maxdist-v"],
+    ["beds", "beds", null], ["baths", "baths", null],
+    ["rate", "rate", null], ["down", "down", null],
+    ["gas", "gas", null], ["mpg", "mpg", null],
+    ["days", "days", null], ["weeks", "weeks", null],
+    ["util", "util", null], ["minmi", "minmi", "minmi-v"],
+    ["w-sqft", "wSqft", "w-sqft-v"], ["w-month", "wMonth", "w-month-v"],
+    ["w-drive", "wDrive", "w-drive-v"], ["w-lirr", "wLirr", "w-lirr-v"]
+  ];
+
+  BINDINGS.forEach(function (b) {
+    var el = document.getElementById(b[0]);
+    el.addEventListener("input", function () {
+      var v = parseFloat(el.value);
+      if (!isFinite(v)) return;
+      S[b[1]] = v;
+      if (b[2]) document.getElementById(b[2]).textContent = v;
+      if (b[0] === "lat" || b[0] === "lng") syncPresets();
+      updateWeightNote();
+      render();
+    });
+  });
+
+  function updateWeightNote() {
+    var sum = S.wSqft + S.wMonth + S.wDrive + S.wLirr;
+    document.getElementById("w-note").textContent = sum === 100
+      ? "Weights total 100%."
+      : "Weights total " + sum + "% — normalised to 100% before scoring.";
+  }
+
+  document.getElementById("reset-w").addEventListener("click", function () {
+    var d = { "w-sqft": 30, "w-month": 40, "w-drive": 20, "w-lirr": 10 };
+    Object.keys(d).forEach(function (id) {
+      document.getElementById(id).value = d[id];
+      document.getElementById(id + "-v").textContent = d[id];
+    });
+    S.wSqft = 30; S.wMonth = 40; S.wDrive = 20; S.wLirr = 10;
+    updateWeightNote(); render();
+  });
+
+  // map click
+  var map = document.getElementById("map");
+  map.addEventListener("click", function (e) {
+    if (!map.__inv) return;
+    var box = map.getBoundingClientRect();
+    var vb = map.viewBox.baseVal;
+    var x = (e.clientX - box.left) / box.width * vb.width;
+    var y = (e.clientY - box.top) / box.height * vb.height;
+    var p = map.__inv(x, y);
+    setOffice(p.lat, p.lng);
+  });
+
+  // table: sort + expand
+  document.querySelectorAll("#table thead th[data-sort]").forEach(function (th) {
+    th.addEventListener("click", function () {
+      var k = th.dataset.sort;
+      if (S.sortKey === k) S.sortDir *= -1;
+      else { S.sortKey = k; S.sortDir = (k === "address") ? 1 : -1; }
+      document.querySelectorAll("#table thead th").forEach(function (o) { o.removeAttribute("aria-sort"); });
+      th.setAttribute("aria-sort", S.sortDir === 1 ? "ascending" : "descending");
+      render();
+    });
+  });
+
+  document.getElementById("tbody").addEventListener("click", function (e) {
+    var tr = e.target.closest("tr[data-id]");
+    if (!tr) return;
+    S.openId = (S.openId === tr.dataset.id) ? null : tr.dataset.id;
+    render();
+  });
+  document.getElementById("tbody").addEventListener("keydown", function (e) {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    var tr = e.target.closest("tr[data-id]");
+    if (!tr) return;
+    e.preventDefault();
+    S.openId = (S.openId === tr.dataset.id) ? null : tr.dataset.id;
+    render();
+  });
+
+  document.getElementById("badge-count").textContent = LISTINGS.length + " listings";
+  document.getElementById("stamp").textContent =
+    "Synthetic dataset · seed " + DATA.seed + " · " + DATA.count + " listings";
+  document.querySelector('#table thead th[data-sort="score"]').setAttribute("aria-sort", "descending");
+  updateWeightNote();
+  render();
+})();
+</script>

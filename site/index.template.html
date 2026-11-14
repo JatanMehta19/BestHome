@@ -1,0 +1,940 @@
+<title>Commute Cost Ranker</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=Inter:wght@400;500;600&display=swap">
+<style>
+  /* Layout: sticky control rail + results column; stacks to one column on phones.
+     Visual direction: commuter-rail timetable - dense, institutional, tabular. */
+  :root {
+    --bg:          #f4f6f5;
+    --surface:     #ffffff;
+    --surface-2:   #ecefed;
+    --ink:         #141d1c;
+    --muted:       #5d6b69;
+    --line:        #d6dbd8;
+    --accent:      #10655a;
+    --accent-soft: #d7e8e4;
+    --good:        #1d7a4c;
+    --warn:        #9a6610;
+    --bad:         #9e3429;
+    --font-display: "Barlow Semi Condensed", "Arial Narrow", sans-serif;
+    --font-body:    "Inter", system-ui, -apple-system, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg:          #0e1413;
+      --surface:     #161f1e;
+      --surface-2:   #1e2927;
+      --ink:         #e8ecea;
+      --muted:       #93a3a0;
+      --line:        #2b3836;
+      --accent:      #4cc0ab;
+      --accent-soft: #1b3330;
+      --good:        #52c483;
+      --warn:        #d9a443;
+      --bad:         #e0796b;
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg:          #0e1413;
+    --surface:     #161f1e;
+    --surface-2:   #1e2927;
+    --ink:         #e8ecea;
+    --muted:       #93a3a0;
+    --line:        #2b3836;
+    --accent:      #4cc0ab;
+    --accent-soft: #1b3330;
+    --good:        #52c483;
+    --warn:        #d9a443;
+    --bad:         #e0796b;
+    color-scheme: dark;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--font-body);
+    font-size: 15px;
+    line-height: 1.5;
+    margin: 0;
+  }
+  .wrap {
+    max-width: 1240px;
+    margin: 0 auto;
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+    padding-block: 28px 56px;
+  }
+  h1, h2, h3 { font-family: var(--font-display); font-weight: 700; margin: 0; text-wrap: balance; }
+  h1 { font-size: clamp(30px, 5vw, 46px); letter-spacing: -0.01em; line-height: 1.02; }
+  h2 { font-size: 20px; letter-spacing: 0.01em; }
+  h3 { font-size: 16px; }
+  .eyebrow {
+    font-family: var(--font-display);
+    font-size: 12px; font-weight: 600;
+    letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--muted);
+  }
+  .num { font-variant-numeric: tabular-nums; }
+  a { color: var(--accent); }
+
+  /* ---- header ---- */
+  header { display: flex; flex-direction: column; gap: 10px; padding-bottom: 22px; }
+  .thesis { max-width: 62ch; color: var(--muted); font-size: 16px; margin: 0; }
+  .badges { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .badge {
+    font-family: var(--font-display);
+    font-size: 11.5px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase;
+    border: 1px solid var(--line); border-radius: 2px;
+    padding: 3px 8px; color: var(--muted); background: var(--surface);
+  }
+  .badge.flag { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+
+  /* ---- the verdict panel: the question this tool exists to answer ---- */
+  .verdict {
+    border: 1px solid var(--line); border-top: 3px solid var(--accent);
+    background: var(--surface); margin-bottom: 20px;
+  }
+  .verdict-head { padding: 14px 16px 0; }
+  .verdict-line { font-size: 17px; margin: 6px 0 0; }
+  .verdict-line strong { color: var(--accent); }
+  .zones { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; background: var(--line); margin-top: 14px; }
+  .zone { background: var(--surface); padding: 14px 16px 16px; min-width: 0; }
+  .zone-name { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+  .zone-stat { display: flex; justify-content: space-between; gap: 12px; padding: 5px 0; border-bottom: 1px dotted var(--line); font-size: 14px; }
+  .zone-stat:last-child { border-bottom: 0; }
+  .zone-stat span:last-child { font-weight: 600; }
+  .zone-big { font-family: var(--font-display); font-size: 30px; font-weight: 700; line-height: 1.1; margin-top: 8px; }
+  .zone-big small { font-size: 13px; font-weight: 500; color: var(--muted); font-family: var(--font-body); }
+
+  /* ---- main grid ---- */
+  .cols { display: grid; grid-template-columns: 320px minmax(0, 1fr); gap: 20px; align-items: start; }
+  .rail { position: sticky; top: 12px; display: flex; flex-direction: column; gap: 14px; }
+
+  .card { border: 1px solid var(--line); background: var(--surface); }
+  .card > h2, .card > .card-head {
+    font-family: var(--font-display); font-size: 13px; font-weight: 600;
+    letter-spacing: 0.12em; text-transform: uppercase;
+    padding: 10px 14px; border-bottom: 1px solid var(--line);
+    background: var(--surface-2); color: var(--muted);
+    display: flex; justify-content: space-between; align-items: center; gap: 8px;
+  }
+  .card-body { padding: 14px; display: flex; flex-direction: column; gap: 13px; }
+
+  /* ---- controls ---- */
+  .field { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+  .field label { font-size: 12.5px; color: var(--muted); display: flex; justify-content: space-between; gap: 8px; }
+  .field label b { color: var(--ink); font-variant-numeric: tabular-nums; font-weight: 600; }
+  .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  input[type="number"], select {
+    font: inherit; font-size: 14px; color: var(--ink);
+    background: var(--bg); border: 1px solid var(--line); border-radius: 2px;
+    padding: 6px 8px; width: 100%; min-width: 0;
+    font-variant-numeric: tabular-nums;
+  }
+  input[type="range"] { width: 100%; accent-color: var(--accent); margin: 0; }
+  .presets { display: flex; flex-wrap: wrap; gap: 6px; }
+  .preset {
+    font: inherit; font-size: 12.5px; cursor: pointer;
+    background: var(--bg); color: var(--ink);
+    border: 1px solid var(--line); border-radius: 2px; padding: 4px 9px;
+  }
+  .preset:hover { border-color: var(--accent); color: var(--accent); }
+  .preset[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+  /* The dark palette's accent is light, so pressed text flips to near-black. */
+  :root[data-theme="dark"] .preset[aria-pressed="true"] { color: #07100f; }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .preset[aria-pressed="true"] { color: #07100f; }
+  }
+  button:focus-visible, input:focus-visible, select:focus-visible, tr:focus-visible {
+    outline: 2px solid var(--accent); outline-offset: 1px;
+  }
+  .hint { font-size: 12px; color: var(--muted); margin: 0; }
+
+  /* ---- map ---- */
+  .map-wrap { padding: 0; }
+  svg.map { display: block; width: 100%; height: auto; cursor: crosshair; background: var(--surface); }
+  .legend { display: flex; flex-wrap: wrap; gap: 12px; padding: 9px 14px; border-top: 1px solid var(--line); font-size: 12px; color: var(--muted); }
+  .legend i { display: inline-flex; align-items: center; gap: 5px; font-style: normal; }
+
+  /* ---- table ---- */
+  .table-scroll { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
+  th, td { text-align: right; padding: 7px 9px; white-space: nowrap; }
+  th:first-child, td:first-child, th:nth-child(2), td:nth-child(2) { text-align: left; }
+  thead th {
+    font-family: var(--font-display); font-size: 11.5px; font-weight: 600;
+    letter-spacing: 0.07em; text-transform: uppercase; color: var(--muted);
+    border-bottom: 1px solid var(--line); background: var(--surface-2);
+    position: sticky; top: 0; cursor: pointer; user-select: none;
+  }
+  thead th[aria-sort] { color: var(--accent); }
+  tbody tr { border-bottom: 1px solid var(--line); cursor: pointer; }
+  tbody tr:hover { background: var(--surface-2); }
+  tbody tr.open { background: var(--accent-soft); }
+  .rank { font-family: var(--font-display); font-weight: 700; color: var(--muted); }
+  .addr { font-weight: 500; }
+  .addr small { display: block; color: var(--muted); font-weight: 400; font-size: 12px; }
+  .score { font-family: var(--font-display); font-weight: 700; font-size: 16px; }
+  .zpill {
+    font-family: var(--font-display); font-size: 11px; font-weight: 600;
+    letter-spacing: 0.07em; text-transform: uppercase;
+    padding: 2px 6px; border-radius: 2px; border: 1px solid;
+  }
+  td.detail { padding: 0; }
+  .breakdown { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 14px; padding: 14px; background: var(--surface-2); text-align: left; white-space: normal; }
+  .bk h4 { font-family: var(--font-display); font-size: 11.5px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); margin: 0 0 6px; font-weight: 600; }
+  .bk-row { display: flex; justify-content: space-between; gap: 10px; font-size: 13px; padding: 2px 0; }
+  .bk-row.total { border-top: 1px solid var(--line); margin-top: 4px; padding-top: 5px; font-weight: 600; }
+  .bar { height: 5px; background: var(--line); border-radius: 2px; overflow: hidden; margin-top: 3px; }
+  .bar i { display: block; height: 100%; background: var(--accent); }
+  .nodata { color: var(--warn); font-size: 12px; }
+
+  .diag { display: flex; flex-wrap: wrap; gap: 6px 16px; padding: 11px 14px; font-size: 12.5px; color: var(--muted); border-top: 1px solid var(--line); }
+  .diag b { color: var(--ink); font-variant-numeric: tabular-nums; }
+  .empty { padding: 30px 16px; text-align: center; color: var(--muted); }
+
+  footer { margin-top: 32px; border-top: 1px solid var(--line); padding-top: 18px; color: var(--muted); font-size: 13.5px; display: flex; flex-direction: column; gap: 10px; }
+  footer p { margin: 0; max-width: 72ch; }
+  code { font-size: 12.5px; background: var(--surface-2); padding: 1px 4px; border-radius: 2px; }
+
+  @media (max-width: 880px) {
+    .cols { grid-template-columns: 1fr; }
+    .rail { position: static; }
+    .zones { grid-template-columns: 1fr; }
+  }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div class="wrap">
+  <header>
+    <p class="eyebrow">Long Island &middot; buyer-side analysis</p>
+    <h1>Is the cheaper house actually cheaper?</h1>
+    <p class="thesis">
+      A house 25 miles out costs less to buy and more to reach. This ranks listings on what
+      you actually pay each month &mdash; mortgage, property tax, HOA, utilities and the fuel
+      burned getting to work &mdash; and lets you set a different budget ceiling for near and far.
+    </p>
+    <div class="badges">
+      <span class="badge flag">Synthetic demo data</span>
+      <span class="badge" id="badge-count">72 listings</span>
+      <span class="badge">No API key needed</span>
+    </div>
+  </header>
+
+  <section class="verdict" aria-live="polite">
+    <div class="verdict-head">
+      <p class="eyebrow">The tradeoff, at your settings</p>
+      <p class="verdict-line" id="verdict">&nbsp;</p>
+    </div>
+    <div class="zones">
+      <div class="zone">
+        <div class="zone-name">
+          <span class="dot" style="background:var(--accent)"></span>
+          <h3>Near zone</h3>
+          <span class="eyebrow" id="near-label"></span>
+        </div>
+        <div class="zone-big num" id="near-monthly">&mdash;</div>
+        <div class="zone-stat"><span>Listings in budget</span><span class="num" id="near-n">0</span></div>
+        <div class="zone-stat"><span>Median price</span><span class="num" id="near-price">&mdash;</span></div>
+        <div class="zone-stat"><span>Median drive</span><span class="num" id="near-drive">&mdash;</span></div>
+        <div class="zone-stat"><span>Fuel per year</span><span class="num" id="near-fuel">&mdash;</span></div>
+      </div>
+      <div class="zone">
+        <div class="zone-name">
+          <span class="dot" style="background:var(--warn)"></span>
+          <h3>Far zone</h3>
+          <span class="eyebrow" id="far-label"></span>
+        </div>
+        <div class="zone-big num" id="far-monthly">&mdash;</div>
+        <div class="zone-stat"><span>Listings in budget</span><span class="num" id="far-n">0</span></div>
+        <div class="zone-stat"><span>Median price</span><span class="num" id="far-price">&mdash;</span></div>
+        <div class="zone-stat"><span>Median drive</span><span class="num" id="far-drive">&mdash;</span></div>
+        <div class="zone-stat"><span>Fuel per year</span><span class="num" id="far-fuel">&mdash;</span></div>
+      </div>
+    </div>
+  </section>
+
+  <div class="cols">
+    <!-- ================= CONTROL RAIL ================= -->
+    <div class="rail">
+      <div class="card">
+        <div class="card-head">Workplace</div>
+        <div class="card-body">
+          <div class="presets" id="presets"></div>
+          <p class="hint">Or click the map to drop your workplace anywhere.</p>
+          <div class="row2">
+            <div class="field">
+              <label for="lat">Latitude</label>
+              <input type="number" id="lat" step="0.0001" value="40.7493">
+            </div>
+            <div class="field">
+              <label for="lng">Longitude</label>
+              <input type="number" id="lng" step="0.0001" value="-73.6409">
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">Zones &amp; budget</div>
+        <div class="card-body">
+          <div class="field">
+            <label for="radius">Near zone radius <b><span id="radius-v">8</span> mi</b></label>
+            <input type="range" id="radius" min="2" max="30" step="1" value="8">
+          </div>
+          <div class="field">
+            <label for="budget-near">Budget inside that radius</label>
+            <input type="number" id="budget-near" step="10000" value="650000">
+          </div>
+          <div class="field">
+            <label for="budget-far">Budget beyond it</label>
+            <input type="number" id="budget-far" step="10000" value="500000">
+          </div>
+          <div class="field">
+            <label for="maxdist">Hard distance cutoff <b><span id="maxdist-v">30</span> mi</b></label>
+            <input type="range" id="maxdist" min="5" max="60" step="1" value="30">
+          </div>
+          <div class="row2">
+            <div class="field">
+              <label for="beds">Min beds</label>
+              <input type="number" id="beds" min="0" max="6" step="1" value="3">
+            </div>
+            <div class="field">
+              <label for="baths">Min baths</label>
+              <input type="number" id="baths" min="0" max="5" step="1" value="2">
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">Cost assumptions</div>
+        <div class="card-body">
+          <div class="row2">
+            <div class="field">
+              <label for="rate">Rate %</label>
+              <input type="number" id="rate" step="0.01" value="6.23">
+            </div>
+            <div class="field">
+              <label for="down">Down %</label>
+              <input type="number" id="down" step="1" value="10">
+            </div>
+          </div>
+          <div class="row2">
+            <div class="field">
+              <label for="gas">Gas $/gal</label>
+              <input type="number" id="gas" step="0.05" value="4.00">
+            </div>
+            <div class="field">
+              <label for="mpg">Car MPG</label>
+              <input type="number" id="mpg" step="1" value="28">
+            </div>
+          </div>
+          <div class="row2">
+            <div class="field">
+              <label for="days">Days/week</label>
+              <input type="number" id="days" min="0" max="7" step="1" value="5">
+            </div>
+            <div class="field">
+              <label for="weeks">Weeks/year</label>
+              <input type="number" id="weeks" min="1" max="52" step="1" value="50">
+            </div>
+          </div>
+          <div class="field">
+            <label for="util">Utilities estimate $/mo</label>
+            <input type="number" id="util" step="25" value="300">
+          </div>
+          <div class="field">
+            <label for="minmi">Drive time estimate <b><span id="minmi-v">2.5</span> min/mi</b></label>
+            <input type="range" id="minmi" min="1" max="5" step="0.1" value="2.5">
+            <p class="hint">Straight-line distance &times; this factor. The private pipeline
+              replaces it with traffic-aware Google Distance Matrix times.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <span>Score weights</span>
+          <button class="preset" type="button" id="reset-w">Reset</button>
+        </div>
+        <div class="card-body">
+          <div class="field">
+            <label for="w-sqft">Price per sqft <b><span id="w-sqft-v">30</span>%</b></label>
+            <input type="range" id="w-sqft" min="0" max="100" step="5" value="30">
+          </div>
+          <div class="field">
+            <label for="w-month">All-in monthly cost <b><span id="w-month-v">40</span>%</b></label>
+            <input type="range" id="w-month" min="0" max="100" step="5" value="40">
+          </div>
+          <div class="field">
+            <label for="w-drive">Drive to work <b><span id="w-drive-v">20</span>%</b></label>
+            <input type="range" id="w-drive" min="0" max="100" step="5" value="20">
+          </div>
+          <div class="field">
+            <label for="w-lirr">LIRR proximity <b><span id="w-lirr-v">10</span>%</b></label>
+            <input type="range" id="w-lirr" min="0" max="100" step="5" value="10">
+          </div>
+          <p class="hint" id="w-note"></p>
+        </div>
+      </div>
+    </div>
+
+    <!-- ================= RESULTS ================= -->
+    <div style="display:flex; flex-direction:column; gap:20px; min-width:0;">
+      <div class="card map-wrap">
+        <div class="card-head"><span>Where they sit</span><span id="map-note" style="text-transform:none; letter-spacing:0"></span></div>
+        <svg class="map" id="map" viewBox="0 0 820 420" role="img"
+             aria-label="Schematic map of listings around the chosen workplace, coloured by value score."></svg>
+        <div class="legend">
+          <i><span class="dot" style="background:var(--accent)"></span> higher score</i>
+          <i><span class="dot" style="background:var(--surface-2); border:1px solid var(--line)"></span> lower score</i>
+          <i><span class="dot" style="background:var(--bad)"></span> filtered out</i>
+          <i>&#9733; workplace</i>
+          <i>&#9711; near-zone radius</i>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <span>Ranked by value score</span>
+          <span id="rank-count" style="text-transform:none; letter-spacing:0"></span>
+        </div>
+        <div class="table-scroll">
+          <table id="table">
+            <thead>
+              <tr>
+                <th style="cursor:default">#</th>
+                <th data-sort="address">Address</th>
+                <th data-sort="price">Price</th>
+                <th data-sort="ppsf">$/sqft</th>
+                <th data-sort="monthly">All-in / mo</th>
+                <th data-sort="drive">Drive</th>
+                <th data-sort="lirr">LIRR</th>
+                <th data-sort="score">Score</th>
+              </tr>
+            </thead>
+            <tbody id="tbody"></tbody>
+          </table>
+        </div>
+        <div class="diag" id="diag"></div>
+      </div>
+    </div>
+  </div>
+
+  <footer>
+    <p><strong>How the score works.</strong> Each of the four factors is normalised across the
+      listings that pass your filters, lower being better, then combined with your weights.
+      It is a ranking <em>within this set</em>, not an absolute rating &mdash; change the filters and
+      every number moves. A listing with no square footage is scored <em>worst</em> on price per
+      sqft rather than best, which is the honest treatment of missing data.</p>
+    <p><strong>About the data.</strong> These listings are invented. Their prices, square footage
+      and property-tax rates are calibrated to real Long Island distributions &mdash; effective tax
+      runs 1.3&ndash;1.7% of price here, which is why tax outweighs fuel in almost every row &mdash; but
+      no address, listing or agent on this page is real. The scoring engine is the same one the
+      private pipeline runs against live listings.</p>
+    <p class="num" id="stamp"></p>
+  </footer>
+</div>
+
+<script id="demo-data" type="application/json">__DEMO_DATA__</script>
+<script>
+(function () {
+  "use strict";
+
+  var DATA = JSON.parse(document.getElementById("demo-data").textContent);
+  var LISTINGS = DATA.listings;
+
+  // Well-known public employment centres, spread west to east, so no single
+  // default implies anything about whoever built this.
+  var PRESETS = [
+    { name: "Mineola",     lat: 40.7493, lng: -73.6409 },
+    { name: "Garden City", lat: 40.7268, lng: -73.6343 },
+    { name: "Uniondale",   lat: 40.7265, lng: -73.5918 },
+    { name: "Hauppauge",   lat: 40.8176, lng: -73.2065 },
+    { name: "Stony Brook", lat: 40.9257, lng: -73.1409 },
+    { name: "Penn Sta.",   lat: 40.7506, lng: -73.9935 }
+  ];
+
+  var S = {
+    lat: 40.7493, lng: -73.6409,
+    radius: 8, budgetNear: 650000, budgetFar: 500000,
+    maxdist: 30, beds: 3, baths: 2,
+    rate: 6.23, down: 10, gas: 4.0, mpg: 28, days: 5, weeks: 50,
+    util: 300, minmi: 2.5,
+    wSqft: 30, wMonth: 40, wDrive: 20, wLirr: 10,
+    sortKey: "score", sortDir: -1, openId: null
+  };
+
+  // ---------- maths ----------
+  var MI_PER_DEG_LAT = 69.0;
+
+  function haversine(lat1, lon1, lat2, lon2) {
+    var R = 3958.8, rad = Math.PI / 180;
+    var p1 = lat1 * rad, p2 = lat2 * rad;
+    var dp = (lat2 - lat1) * rad, dl = (lon2 - lon1) * rad;
+    var a = Math.sin(dp / 2) * Math.sin(dp / 2) +
+            Math.cos(p1) * Math.cos(p2) * Math.sin(dl / 2) * Math.sin(dl / 2);
+    return R * 2 * Math.asin(Math.sqrt(a));
+  }
+
+  function monthlyPayment(price, ratePct, termYears, downPct) {
+    var principal = price * (1 - downPct / 100);
+    var r = (ratePct / 100) / 12, n = termYears * 12;
+    if (r <= 0) return principal / n;
+    return principal * (r * Math.pow(1 + r, n)) / (Math.pow(1 + r, n) - 1);
+  }
+
+  function median(arr) {
+    if (!arr.length) return null;
+    var a = arr.slice().sort(function (x, y) { return x - y; });
+    var m = Math.floor(a.length / 2);
+    return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2;
+  }
+
+  // Lower input = higher score. Missing data is filled with the WORST observed
+  // value, so a listing with no sqft scores 0 on that factor, never 100.
+  function normLow(values) {
+    var known = values.filter(function (v) { return v !== null && isFinite(v); });
+    if (!known.length) return values.map(function () { return 50; });
+    var worst = Math.max.apply(null, known);
+    var filled = values.map(function (v) { return (v === null || !isFinite(v)) ? worst : v; });
+    var lo = Math.min.apply(null, filled), hi = Math.max.apply(null, filled);
+    if (hi === lo) return filled.map(function () { return 50; });
+    return filled.map(function (v) { return 100 * (1 - (v - lo) / (hi - lo)); });
+  }
+
+  // ---------- the model ----------
+  function compute() {
+    var skipped = { beds_baths: 0, too_far: 0, over_budget: 0 };
+    var costPerMile = S.gas / Math.max(1, S.mpg);
+    var rows = [];
+
+    LISTINGS.forEach(function (L) {
+      var dist = haversine(L.lat, L.lng, S.lat, S.lng);
+      var zone = dist <= S.radius ? "NEAR" : "FAR";
+      var cap  = zone === "NEAR" ? S.budgetNear : S.budgetFar;
+
+      var r = {
+        id: L.id, raw: L, dist: dist, zone: zone, cap: cap,
+        kept: true, reason: null
+      };
+
+      if (L.beds < S.beds || L.baths < S.baths) { r.kept = false; r.reason = "beds_baths"; }
+      else if (dist > S.maxdist)                { r.kept = false; r.reason = "too_far"; }
+      else if (L.price > cap)                   { r.kept = false; r.reason = "over_budget"; }
+      if (!r.kept) skipped[r.reason]++;
+
+      // Costs are computed for every listing so the map can still place it.
+      r.driveMins   = Math.round(dist * S.minmi);
+      r.annualFuel  = dist * 2 * S.days * S.weeks * costPerMile;
+      r.monthlyFuel = r.annualFuel / 12;
+      r.mortgage    = monthlyPayment(L.price, S.rate, 30, S.down);
+      r.tax         = L.annual_tax / 12;
+      r.hoa         = L.hoa_monthly || 0;
+      r.monthly     = r.mortgage + r.tax + r.hoa + r.monthlyFuel + S.util;
+      r.ppsf        = L.sqft > 0 ? L.price / L.sqft : null;
+      r.lirr        = L.lirr_drive_mins;
+      rows.push(r);
+    });
+
+    var kept = rows.filter(function (r) { return r.kept; });
+
+    // Weights are normalised, so any combination of sliders is valid.
+    var wsum = S.wSqft + S.wMonth + S.wDrive + S.wLirr;
+    var w = wsum > 0
+      ? { s: S.wSqft / wsum, m: S.wMonth / wsum, d: S.wDrive / wsum, l: S.wLirr / wsum }
+      : { s: 0.25, m: 0.25, d: 0.25, l: 0.25 };
+
+    var nSqft  = normLow(kept.map(function (r) { return r.ppsf; }));
+    var nMonth = normLow(kept.map(function (r) { return r.monthly; }));
+    var nDrive = normLow(kept.map(function (r) { return r.driveMins; }));
+    var nLirr  = normLow(kept.map(function (r) { return r.lirr; }));
+
+    kept.forEach(function (r, i) {
+      r.nSqft = nSqft[i]; r.nMonth = nMonth[i]; r.nDrive = nDrive[i]; r.nLirr = nLirr[i];
+      r.score = Math.round((w.s * nSqft[i] + w.m * nMonth[i] +
+                            w.d * nDrive[i] + w.l * nLirr[i]) * 10) / 10;
+    });
+
+    return { all: rows, kept: kept, skipped: skipped, weights: w };
+  }
+
+  // ---------- formatting ----------
+  function money0(v) {
+    if (v === null || !isFinite(v)) return "—";
+    return "$" + Math.round(v).toLocaleString("en-US");
+  }
+  function esc(s) {
+    return String(s).replace(/[&<>"]/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c];
+    });
+  }
+
+  // ---------- render: verdict ----------
+  function renderVerdict(M) {
+    var near = M.kept.filter(function (r) { return r.zone === "NEAR"; });
+    var far  = M.kept.filter(function (r) { return r.zone === "FAR"; });
+
+    document.getElementById("near-label").textContent = "≤ " + S.radius + " mi · ≤ " + money0(S.budgetNear);
+    document.getElementById("far-label").textContent  = "> " + S.radius + " mi · ≤ " + money0(S.budgetFar);
+
+    function fill(prefix, set) {
+      var mMonthly = median(set.map(function (r) { return r.monthly; }));
+      document.getElementById(prefix + "-monthly").innerHTML =
+        set.length ? money0(mMonthly) + " <small>/ mo median</small>" : "—";
+      document.getElementById(prefix + "-n").textContent = set.length;
+      document.getElementById(prefix + "-price").textContent = money0(median(set.map(function (r) { return r.raw.price; })));
+      var d = median(set.map(function (r) { return r.driveMins; }));
+      document.getElementById(prefix + "-drive").textContent = d === null ? "—" : d + " min";
+      document.getElementById(prefix + "-fuel").textContent = money0(median(set.map(function (r) { return r.annualFuel; })));
+      return mMonthly;
+    }
+
+    var nearM = fill("near", near);
+    var farM  = fill("far", far);
+
+    var el = document.getElementById("verdict");
+    if (!near.length && !far.length) {
+      el.innerHTML = "Nothing clears these filters. Loosen the budget or the bedroom minimum.";
+    } else if (!near.length) {
+      el.innerHTML = "Nothing inside " + S.radius + " mi fits a " + money0(S.budgetNear) +
+        " budget, so every option here is a <strong>longer commute</strong>.";
+    } else if (!far.length) {
+      el.innerHTML = "Nothing beyond " + S.radius + " mi fits a " + money0(S.budgetFar) +
+        " budget &mdash; the far zone saves nothing at this ceiling.";
+    } else {
+      var gap = nearM - farM;
+      var pGap = median(near.map(function (r) { return r.raw.price; })) - median(far.map(function (r) { return r.raw.price; }));
+      if (gap > 0) {
+        el.innerHTML = "Moving out past " + S.radius + " mi saves <strong>" + money0(gap) +
+          "/mo</strong> all-in on a " + money0(pGap) + " cheaper house, and costs " +
+          "<strong>" + (median(far.map(function (r) { return r.driveMins; })) - median(near.map(function (r) { return r.driveMins; }))) +
+          " more minutes</strong> each way.";
+      } else {
+        el.innerHTML = "The far zone is <strong>" + money0(-gap) + "/mo more expensive</strong> all-in " +
+          "despite cheaper asking prices &mdash; taxes and fuel cancel the discount.";
+      }
+    }
+  }
+
+  // ---------- render: map ----------
+  function renderMap(M) {
+    var svg = document.getElementById("map");
+    var W = 820, H = 420, PAD = 34;
+
+    var lats = M.all.map(function (r) { return r.raw.lat; }).concat([S.lat]);
+    var lngs = M.all.map(function (r) { return r.raw.lng; }).concat([S.lng]);
+    var minLat = Math.min.apply(null, lats), maxLat = Math.max.apply(null, lats);
+    var minLng = Math.min.apply(null, lngs), maxLng = Math.max.apply(null, lngs);
+
+    var midLat = (minLat + maxLat) / 2;
+    var miPerDegLng = MI_PER_DEG_LAT * Math.cos(midLat * Math.PI / 180);
+
+    // One scale for both axes, so the radius ring is a true circle.
+    var spanX = Math.max(0.01, (maxLng - minLng) * miPerDegLng);
+    var spanY = Math.max(0.01, (maxLat - minLat) * MI_PER_DEG_LAT);
+    var pxPerMi = Math.min((W - 2 * PAD) / spanX, (H - 2 * PAD) / spanY);
+    var cx = (minLng + maxLng) / 2, cy = (minLat + maxLat) / 2;
+
+    function px(lng) { return W / 2 + (lng - cx) * miPerDegLng * pxPerMi; }
+    function py(lat) { return H / 2 - (lat - cy) * MI_PER_DEG_LAT * pxPerMi; }
+
+    svg.__inv = function (x, y) {
+      return {
+        lng: cx + (x - W / 2) / (miPerDegLng * pxPerMi),
+        lat: cy - (y - H / 2) / (MI_PER_DEG_LAT * pxPerMi)
+      };
+    };
+
+    var ox = px(S.lng), oy = py(S.lat);
+    var parts = [];
+
+    // near-zone ring
+    parts.push('<circle cx="' + ox.toFixed(1) + '" cy="' + oy.toFixed(1) + '" r="' +
+      (S.radius * pxPerMi).toFixed(1) + '" fill="var(--accent)" fill-opacity="0.07" ' +
+      'stroke="var(--accent)" stroke-opacity="0.5" stroke-dasharray="4 4" stroke-width="1.2"/>');
+
+    // town labels, placed at each town's mean position
+    var towns = {};
+    M.all.forEach(function (r) {
+      var t = towns[r.raw.city] || (towns[r.raw.city] = { la: 0, ln: 0, n: 0 });
+      t.la += r.raw.lat; t.ln += r.raw.lng; t.n++;
+    });
+    Object.keys(towns).forEach(function (name) {
+      var t = towns[name];
+      parts.push('<text x="' + px(t.ln / t.n).toFixed(1) + '" y="' + (py(t.la / t.n) - 13).toFixed(1) +
+        '" text-anchor="middle" font-size="10.5" fill="var(--muted)" ' +
+        'font-family="Barlow Semi Condensed, sans-serif" letter-spacing="0.08em" ' +
+        'style="text-transform:uppercase">' + esc(name.toUpperCase()) + '</text>');
+    });
+
+    // listings
+    M.all.forEach(function (r) {
+      var x = px(r.raw.lng).toFixed(1), y = py(r.raw.lat).toFixed(1);
+      if (!r.kept) {
+        parts.push('<circle cx="' + x + '" cy="' + y + '" r="2.6" fill="var(--bad)" fill-opacity="0.32"/>');
+      } else {
+        var t = Math.max(0, Math.min(1, r.score / 100));
+        var rad = 3.6 + t * 4.2;
+        var sel = r.id === S.openId;
+        parts.push('<circle cx="' + x + '" cy="' + y + '" r="' + (sel ? rad + 2.5 : rad).toFixed(1) +
+          '" fill="var(--accent)" fill-opacity="' + (0.2 + t * 0.75).toFixed(2) +
+          '" stroke="' + (sel ? 'var(--ink)' : 'var(--accent)') +
+          '" stroke-width="' + (sel ? '2.4' : '0.9') + '"><title>' +
+          esc(r.raw.address + ", " + r.raw.city + " — score " + r.score) + '</title></circle>');
+      }
+    });
+
+    // workplace star
+    parts.push('<g transform="translate(' + ox.toFixed(1) + ',' + oy.toFixed(1) + ')">' +
+      '<circle r="9" fill="var(--surface)" stroke="var(--ink)" stroke-width="1.6"/>' +
+      '<text y="4.2" text-anchor="middle" font-size="12" fill="var(--ink)">★</text></g>');
+
+    svg.innerHTML = parts.join("");
+    document.getElementById("map-note").textContent =
+      Math.round(spanX) + " mi across · click to move workplace";
+  }
+
+  // ---------- render: table ----------
+  var SORTERS = {
+    address: function (r) { return r.raw.city + " " + r.raw.address; },
+    price:   function (r) { return r.raw.price; },
+    ppsf:    function (r) { return r.ppsf === null ? Infinity : r.ppsf; },
+    monthly: function (r) { return r.monthly; },
+    drive:   function (r) { return r.driveMins; },
+    lirr:    function (r) { return r.lirr; },
+    score:   function (r) { return r.score; }
+  };
+
+  function renderTable(M) {
+    var tb = document.getElementById("tbody");
+    var rows = M.kept.slice();
+    var f = SORTERS[S.sortKey] || SORTERS.score;
+    rows.sort(function (a, b) {
+      var x = f(a), y = f(b);
+      if (typeof x === "string") return S.sortDir * x.localeCompare(y);
+      return S.sortDir * (x - y);
+    });
+
+    document.getElementById("rank-count").textContent =
+      rows.length + " of " + LISTINGS.length + " pass";
+
+    if (!rows.length) {
+      tb.innerHTML = '<tr><td colspan="8" class="empty">No listing clears these filters. ' +
+        'Try a higher budget, a wider radius, or fewer bedrooms.</td></tr>';
+      renderDiag(M);
+      return;
+    }
+
+    var html = "";
+    rows.forEach(function (r, i) {
+      var zc = r.zone === "NEAR" ? "var(--accent)" : "var(--warn)";
+      var open = r.id === S.openId;
+      html += '<tr tabindex="0" data-id="' + r.id + '"' + (open ? ' class="open"' : '') + '>' +
+        '<td class="rank num">' + (i + 1) + '</td>' +
+        '<td class="addr">' + esc(r.raw.address) +
+          '<small>' + esc(r.raw.city) + ' · ' + r.raw.beds + 'bd/' + r.raw.baths + 'ba · ' +
+          (r.raw.sqft ? r.raw.sqft.toLocaleString("en-US") + ' sqft' : 'sqft unknown') + ' · ' +
+          '<span class="zpill" style="color:' + zc + ';border-color:' + zc + '">' + r.zone + '</span></small></td>' +
+        '<td class="num">' + money0(r.raw.price) + '</td>' +
+        '<td class="num">' + (r.ppsf === null ? '<span class="nodata">n/a</span>' : money0(r.ppsf)) + '</td>' +
+        '<td class="num">' + money0(r.monthly) + '</td>' +
+        '<td class="num">' + r.driveMins + ' min</td>' +
+        '<td class="num">' + r.lirr + ' min</td>' +
+        '<td class="num score" style="color:' + (r.score >= 60 ? 'var(--good)' : r.score >= 40 ? 'var(--ink)' : 'var(--muted)') + '">' +
+          r.score.toFixed(1) + '</td></tr>';
+
+      if (open) html += '<tr><td class="detail" colspan="8">' + breakdown(r, M) + '</td></tr>';
+    });
+    tb.innerHTML = html;
+    renderDiag(M);
+  }
+
+  function bar(label, value, weight) {
+    return '<div class="bk-row"><span>' + label + '</span><span class="num">' +
+      value.toFixed(0) + ' &times; ' + Math.round(weight * 100) + '%</span></div>' +
+      '<div class="bar"><i style="width:' + Math.max(0, Math.min(100, value)).toFixed(1) + '%"></i></div>';
+  }
+
+  function breakdown(r, M) {
+    var L = r.raw, w = M.weights;
+    var effTax = L.annual_tax / L.price * 100;
+    return '<div class="breakdown">' +
+      '<div class="bk"><h4>Monthly, all in</h4>' +
+        '<div class="bk-row"><span>Mortgage</span><span class="num">' + money0(r.mortgage) + '</span></div>' +
+        '<div class="bk-row"><span>Property tax</span><span class="num">' + money0(r.tax) + '</span></div>' +
+        '<div class="bk-row"><span>HOA</span><span class="num">' + money0(r.hoa) + '</span></div>' +
+        '<div class="bk-row"><span>Fuel to work</span><span class="num">' + money0(r.monthlyFuel) + '</span></div>' +
+        '<div class="bk-row"><span>Utilities (est.)</span><span class="num">' + money0(S.util) + '</span></div>' +
+        '<div class="bk-row total"><span>Total</span><span class="num">' + money0(r.monthly) + '</span></div></div>' +
+
+      '<div class="bk"><h4>Score components</h4>' +
+        bar("Price / sqft", r.nSqft, w.s) +
+        bar("All-in monthly", r.nMonth, w.m) +
+        bar("Drive to work", r.nDrive, w.d) +
+        bar("LIRR proximity", r.nLirr, w.l) +
+        (L.sqft ? '' : '<p class="nodata" style="margin:7px 0 0">No sqft reported, so this ' +
+          'listing takes the worst price-per-sqft score rather than the best.</p>') +
+      '</div>' +
+
+      '<div class="bk"><h4>The commute</h4>' +
+        '<div class="bk-row"><span>Straight line</span><span class="num">' + r.dist.toFixed(1) + ' mi</span></div>' +
+        '<div class="bk-row"><span>Estimated drive</span><span class="num">' + r.driveMins + ' min</span></div>' +
+        '<div class="bk-row"><span>Fuel per year</span><span class="num">' + money0(r.annualFuel) + '</span></div>' +
+        '<div class="bk-row"><span>Nearest station</span><span>' + esc(L.lirr_station) + '</span></div>' +
+        '<div class="bk-row"><span>Branch</span><span>' + esc(L.lirr_branch) + '</span></div>' +
+        '<div class="bk-row"><span>Drive to station</span><span class="num">' + L.lirr_drive_mins + ' min</span></div></div>' +
+
+      '<div class="bk"><h4>The house</h4>' +
+        '<div class="bk-row"><span>Built</span><span class="num">' + L.year_built + '</span></div>' +
+        '<div class="bk-row"><span>Style</span><span>' + esc(L.style) + '</span></div>' +
+        '<div class="bk-row"><span>Lot</span><span class="num">' + L.lot_sqft.toLocaleString("en-US") + ' sqft</span></div>' +
+        '<div class="bk-row"><span>Heating</span><span>' + esc(L.heating) + '</span></div>' +
+        '<div class="bk-row"><span>Basement</span><span>' + esc(L.basement) + '</span></div>' +
+        '<div class="bk-row"><span>Garage</span><span class="num">' + L.garage_spaces + ' car</span></div>' +
+        '<div class="bk-row"><span>Effective tax rate</span><span class="num">' + effTax.toFixed(2) + '%</span></div>' +
+        '<div class="bk-row"><span>Days listed</span><span class="num">' + L.days_on_market + '</span></div></div>' +
+    '</div>';
+  }
+
+  function renderDiag(M) {
+    var s = M.skipped;
+    document.getElementById("diag").innerHTML =
+      '<span>Filtered out:</span>' +
+      '<span>under ' + S.beds + 'bd/' + S.baths + 'ba <b>' + s.beds_baths + '</b></span>' +
+      '<span>past ' + S.maxdist + ' mi <b>' + s.too_far + '</b></span>' +
+      '<span>over zone budget <b>' + s.over_budget + '</b></span>';
+  }
+
+  // ---------- wiring ----------
+  function render() {
+    var M = compute();
+    renderVerdict(M);
+    renderMap(M);
+    renderTable(M);
+  }
+
+  function num(id) { return parseFloat(document.getElementById(id).value); }
+
+  function syncPresets() {
+    document.querySelectorAll("#presets .preset").forEach(function (b) {
+      var p = PRESETS[+b.dataset.i];
+      var on = Math.abs(p.lat - S.lat) < 0.0005 && Math.abs(p.lng - S.lng) < 0.0005;
+      b.setAttribute("aria-pressed", on ? "true" : "false");
+    });
+  }
+
+  function setOffice(lat, lng) {
+    S.lat = Math.round(lat * 10000) / 10000;
+    S.lng = Math.round(lng * 10000) / 10000;
+    document.getElementById("lat").value = S.lat;
+    document.getElementById("lng").value = S.lng;
+    syncPresets();
+    render();
+  }
+
+  // presets
+  var pc = document.getElementById("presets");
+  PRESETS.forEach(function (p, i) {
+    var b = document.createElement("button");
+    b.type = "button"; b.className = "preset"; b.textContent = p.name;
+    b.dataset.i = i; b.setAttribute("aria-pressed", "false");
+    b.addEventListener("click", function () { setOffice(p.lat, p.lng); });
+    pc.appendChild(b);
+  });
+
+  // numeric + range inputs
+  var BINDINGS = [
+    ["lat", "lat", null], ["lng", "lng", null],
+    ["radius", "radius", "radius-v"], ["budget-near", "budgetNear", null],
+    ["budget-far", "budgetFar", null], ["maxdist", "maxdist", "maxdist-v"],
+    ["beds", "beds", null], ["baths", "baths", null],
+    ["rate", "rate", null], ["down", "down", null],
+    ["gas", "gas", null], ["mpg", "mpg", null],
+    ["days", "days", null], ["weeks", "weeks", null],
+    ["util", "util", null], ["minmi", "minmi", "minmi-v"],
+    ["w-sqft", "wSqft", "w-sqft-v"], ["w-month", "wMonth", "w-month-v"],
+    ["w-drive", "wDrive", "w-drive-v"], ["w-lirr", "wLirr", "w-lirr-v"]
+  ];
+
+  BINDINGS.forEach(function (b) {
+    var el = document.getElementById(b[0]);
+    el.addEventListener("input", function () {
+      var v = parseFloat(el.value);
+      if (!isFinite(v)) return;
+      S[b[1]] = v;
+      if (b[2]) document.getElementById(b[2]).textContent = v;
+      if (b[0] === "lat" || b[0] === "lng") syncPresets();
+      updateWeightNote();
+      render();
+    });
+  });
+
+  function updateWeightNote() {
+    var sum = S.wSqft + S.wMonth + S.wDrive + S.wLirr;
+    document.getElementById("w-note").textContent = sum === 100
+      ? "Weights total 100%."
+      : "Weights total " + sum + "% — normalised to 100% before scoring.";
+  }
+
+  document.getElementById("reset-w").addEventListener("click", function () {
+    var d = { "w-sqft": 30, "w-month": 40, "w-drive": 20, "w-lirr": 10 };
+    Object.keys(d).forEach(function (id) {
+      document.getElementById(id).value = d[id];
+      document.getElementById(id + "-v").textContent = d[id];
+    });
+    S.wSqft = 30; S.wMonth = 40; S.wDrive = 20; S.wLirr = 10;
+    updateWeightNote(); render();
+  });
+
+  // map click
+  var map = document.getElementById("map");
+  map.addEventListener("click", function (e) {
+    if (!map.__inv) return;
+    var box = map.getBoundingClientRect();
+    var vb = map.viewBox.baseVal;
+    var x = (e.clientX - box.left) / box.width * vb.width;
+    var y = (e.clientY - box.top) / box.height * vb.height;
+    var p = map.__inv(x, y);
+    setOffice(p.lat, p.lng);
+  });
+
+  // table: sort + expand
+  document.querySelectorAll("#table thead th[data-sort]").forEach(function (th) {
+    th.addEventListener("click", function () {
+      var k = th.dataset.sort;
+      if (S.sortKey === k) S.sortDir *= -1;
+      else { S.sortKey = k; S.sortDir = (k === "address") ? 1 : -1; }
+      document.querySelectorAll("#table thead th").forEach(function (o) { o.removeAttribute("aria-sort"); });
+      th.setAttribute("aria-sort", S.sortDir === 1 ? "ascending" : "descending");
+      render();
+    });
+  });
+
+  document.getElementById("tbody").addEventListener("click", function (e) {
+    var tr = e.target.closest("tr[data-id]");
+    if (!tr) return;
+    S.openId = (S.openId === tr.dataset.id) ? null : tr.dataset.id;
+    render();
+  });
+  document.getElementById("tbody").addEventListener("keydown", function (e) {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    var tr = e.target.closest("tr[data-id]");
+    if (!tr) return;
+    e.preventDefault();
+    S.openId = (S.openId === tr.dataset.id) ? null : tr.dataset.id;
+    render();
+  });
+
+  document.getElementById("badge-count").textContent = LISTINGS.length + " listings";
+  document.getElementById("stamp").textContent =
+    "Synthetic dataset · seed " + DATA.seed + " · " + DATA.count + " listings";
+  document.querySelector('#table thead th[data-sort="score"]').setAttribute("aria-sort", "descending");
+  updateWeightNote();
+  render();
+})();
+</script>

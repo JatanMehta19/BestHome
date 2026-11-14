@@ -1,0 +1,35 @@
+# ---- Personal settings -----------------------------------------------
+# Workplace coordinates, budgets, search area. Never commit this.
+# config_example.py holds the placeholder version that IS committed.
+config.py
+
+# ---- Scraped data ----------------------------------------------------
+# raw_listings.json holds live Homes.com/CoStar listings including real
+# agents' names and phone numbers. It is licensed content and third-party
+# personal data: keep the whole output directory out of the repository.
+output/
+*.bak.json
+
+# ---- Credentials -----------------------------------------------------
+.env
+.env.*
+*.pem
+*secret*
+*credentials*
+
+# ---- Python ----------------------------------------------------------
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+.ipynb_checkpoints/
+.pytest_cache/
+.mypy_cache/
+
+# ---- Editors / OS ----------------------------------------------------
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
