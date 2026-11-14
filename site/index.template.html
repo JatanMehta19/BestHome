@@ -282,16 +282,16 @@
         <div class="card-head">Zones &amp; budget</div>
         <div class="card-body">
           <div class="field">
-            <label for="radius">Near zone radius <b><span id="radius-v">8</span> mi</b></label>
-            <input type="range" id="radius" min="2" max="30" step="1" value="8">
+            <label for="radius">Near zone radius <b><span id="radius-v">12</span> mi</b></label>
+            <input type="range" id="radius" min="2" max="30" step="1" value="12">
           </div>
           <div class="field">
             <label for="budget-near">Budget inside that radius</label>
-            <input type="number" id="budget-near" step="10000" value="650000">
+            <input type="number" id="budget-near" step="10000" value="750000">
           </div>
           <div class="field">
             <label for="budget-far">Budget beyond it</label>
-            <input type="number" id="budget-far" step="10000" value="500000">
+            <input type="number" id="budget-far" step="10000" value="650000">
           </div>
           <div class="field">
             <label for="maxdist">Hard distance cutoff <b><span id="maxdist-v">30</span> mi</b></label>
@@ -461,7 +461,7 @@
 
   var S = {
     lat: 40.7493, lng: -73.6409,
-    radius: 8, budgetNear: 650000, budgetFar: 500000,
+    radius: 12, budgetNear: 750000, budgetFar: 650000,
     maxdist: 30, beds: 3, baths: 2,
     rate: 6.23, down: 10, gas: 4.0, mpg: 28, days: 5, weeks: 50,
     util: 300, minmi: 2.5,

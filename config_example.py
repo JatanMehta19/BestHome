@@ -31,10 +31,10 @@ OFFICE_COORDS = (40.7493, -73.6409)
 # work, so a published copy of this file would give away roughly where that
 # is - which is exactly why the real one lives in config.py and is gitignored.
 CLOSE_TOWNS  = {"mineola", "westbury", "franklin square", "valley stream"}
-CLOSE_BUDGET = 650_000
+CLOSE_BUDGET = 750_000
 
 FAR_TOWNS    = {"bay shore", "islip", "sayville", "patchogue"}
-FAR_BUDGET   = 500_000
+FAR_BUDGET   = 650_000
 
 # ---- Minimum requirements -------------------------------------------------
 MIN_BEDS  = 3
