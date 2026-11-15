@@ -1,0 +1,54 @@
+name: Deploy demo to GitHub Pages
+
+# The demo is a single self-contained file with no build step, so this just
+# copies it into place and publishes it. Deploying through Actions rather than
+# from a branch folder means the page serves from the site root instead of
+# /site/, and Jekyll never touches the files.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "site/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Let a running deploy finish rather than cancelling it part-way.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Stage the built page
+        # Only the built artefacts ship. index.template.html stays behind:
+        # it still holds the __DEMO_DATA__ placeholder and would render broken.
+        run: |
+          mkdir -p _site
+          cp site/index.html _site/index.html
+          cp site/demo_listings.json _site/demo_listings.json
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4
