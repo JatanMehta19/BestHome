@@ -32,7 +32,7 @@ from settings import (OFFICE_COORDS, COMMUTE_DAYS_PER_WEEK, WORK_WEEKS_PER_YEAR,
                       GAS_PRICE_PER_GALLON, CAR_MPG, UTILITY_EST_MONTHLY,
                       WEIGHT_PRICE_SQFT, WEIGHT_TOTAL_MONTHLY,
                       WEIGHT_COMMUTE_MINS, WEIGHT_LIRR,
-                      LIRR_PENALTY_MINS, TOP_N)
+                      LIRR_PENALTY_MINS, TOP_N, STATION_GEOCODE_REGION)
 
 GOOGLE_MAPS_API_KEY = os.environ.get("GOOGLE_MAPS_API_KEY", "YOUR_KEY_HERE")
 
@@ -169,7 +169,9 @@ def fetch_lirr_commute(df):
         print("  No API key — using LIRR times parsed from listing text.")
         return df
 
-    # Build per-row destination: station name + ", Long Island, NY"
+    # Build per-row destination: station name + the configured region.
+    # The region matters - a bare station name geocodes to the wrong state
+    # often enough to produce plausible but wrong drive times.
     # Rows with no station keep the parsed fallback
     has_station = df["lirr_station_name"] != ""
     if not has_station.any():
@@ -178,7 +180,7 @@ def fetch_lirr_commute(df):
 
     sub      = df[has_station].copy()
     origins  = list(zip(sub["lat"], sub["lng"]))
-    dests    = [f"{name}, Long Island, NY" for name in sub["lirr_station_name"]]
+    dests    = [f"{name}, {STATION_GEOCODE_REGION}" for name in sub["lirr_station_name"]]
 
     print(f"[2/2] Fetching LIRR drive times ({len(sub)} listings)...")
     BATCH = 25

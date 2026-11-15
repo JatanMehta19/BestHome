@@ -40,6 +40,13 @@ FAR_BUDGET   = 650_000
 MIN_BEDS  = 3
 MIN_BATHS = 2
 
+# ---- Commuter rail ---------------------------------------------------------
+# Listings report a nearest "commuter rail" stop, whatever the network: LIRR,
+# Metra, SEPTA, Caltrain. Station names alone are ambiguous to a geocoder
+# ("Riverside Station" exists in several states), so step2 appends this region
+# when asking Google for the drive time. Set it to the area you are searching.
+STATION_GEOCODE_REGION = "Long Island, NY"
+
 # ---- What to scrape -------------------------------------------------------
 # Keep these towns in step with CLOSE_TOWNS / FAR_TOWNS, or listings get
 # scraped and then discarded as "wrong_town".
