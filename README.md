@@ -13,7 +13,10 @@ ceiling for near and far**. That last part is the idea: *"I'll pay more to be 8
 miles from work than to be 25 miles out, but how much more is it worth?"* Move
 the workplace pin and the zones recompute, which flips the ranking.
 
-**[→ Live demo](site/index.html)** — no sign-up, no API key, opens straight from disk.
+### **[→ Try it live](https://jatanmehta19.github.io/BestHome/)**
+
+No sign-up, no API key, nothing to install. Drop the workplace pin anywhere and
+watch the ranking reorder.
 
 ---
 
@@ -23,7 +26,7 @@ Two things share one scoring model:
 
 | | |
 |---|---|
-| **The demo** (`site/`) | Self-contained HTML page. Synthetic listings, everything adjustable, instant. |
+| **The demo** ([live](https://jatanmehta19.github.io/BestHome/), source in `site/`) | Self-contained HTML page. Synthetic listings, everything adjustable, instant. |
 | **The pipeline** (`step*.py`) | Scrapes live listings and scores them with traffic-aware Google Maps drive times. Private, runs locally. |
 
 ### The demo
@@ -34,8 +37,11 @@ python build_site.py       # inline it into site/index.html
 ```
 
 `site/index.html` is one file with no dependencies and no network calls. Open it
-locally, or drop it on GitHub Pages / Netlify unchanged. Fonts come from Google
-Fonts; everything else is inline.
+locally, or drop it on any static host unchanged. Fonts come from Google Fonts;
+everything else is inline.
+
+Pushing a rebuilt `site/` deploys it — `.github/workflows/pages.yml` publishes
+the built files to GitHub Pages at the site root.
 
 Adjustable: workplace location (six preset employment centres, or click the map),
 near-zone radius, both budget ceilings, distance cutoff, bed/bath minimums,
@@ -144,6 +150,8 @@ tile server, no key, no tracking, works offline.
 ## Project layout
 
 ```
+.github/workflows/pages.yml  deploys the demo to GitHub Pages on push
+
 config_example.py          placeholder settings (committed)
 config.py                  your real settings (gitignored)
 settings.py                loads config.py, falls back to the example
