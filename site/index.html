@@ -3,50 +3,56 @@
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=Inter:wght@400;500;600&display=swap">
 <style>
   /* Layout: sticky control rail + results column; stacks to one column on phones.
-     Visual direction: commuter-rail timetable - dense, institutional, tabular. */
+     Visual direction: "harbor" - slate and copper, dense and tabular.
+
+     The hues carry meaning, so they are not generic status colours:
+       --accent  copper, the near zone and every primary control
+       --warn    teal, the far zone (a category, not a warning)
+       --bad     slate, listings filtered out (de-emphasis, not an error)
+       --good    green, a high value score */
   :root {
-    --bg:          #f4f6f5;
+    --bg:          #eef0f1;
     --surface:     #ffffff;
-    --surface-2:   #ecefed;
-    --ink:         #141d1c;
-    --muted:       #5d6b69;
-    --line:        #d6dbd8;
-    --accent:      #10655a;
-    --accent-soft: #d7e8e4;
-    --good:        #1d7a4c;
-    --warn:        #9a6610;
-    --bad:         #9e3429;
+    --surface-2:   #e3e8ea;
+    --ink:         #16242b;
+    --muted:       #5f6e75;
+    --line:        #d0d7da;
+    --accent:      #9c5530;
+    --accent-soft: #f2e2d8;
+    --good:        #2d6a4f;
+    --warn:        #2a6778;
+    --bad:         #7d8a90;
     --font-display: "Barlow Semi Condensed", "Arial Narrow", sans-serif;
     --font-body:    "Inter", system-ui, -apple-system, sans-serif;
   }
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
-      --bg:          #0e1413;
-      --surface:     #161f1e;
-      --surface-2:   #1e2927;
-      --ink:         #e8ecea;
-      --muted:       #93a3a0;
-      --line:        #2b3836;
-      --accent:      #4cc0ab;
-      --accent-soft: #1b3330;
-      --good:        #52c483;
-      --warn:        #d9a443;
-      --bad:         #e0796b;
+      --bg:          #121a1e;
+      --surface:     #18232a;
+      --surface-2:   #1f2d35;
+      --ink:         #e6ecee;
+      --muted:       #91a3ab;
+      --line:        #2c3c45;
+      --accent:      #d98c5f;
+      --accent-soft: #33231a;
+      --good:        #5fbf8d;
+      --warn:        #5cadc2;
+      --bad:         #6f7f87;
       color-scheme: dark;
     }
   }
   :root[data-theme="dark"] {
-    --bg:          #0e1413;
-    --surface:     #161f1e;
-    --surface-2:   #1e2927;
-    --ink:         #e8ecea;
-    --muted:       #93a3a0;
-    --line:        #2b3836;
-    --accent:      #4cc0ab;
-    --accent-soft: #1b3330;
-    --good:        #52c483;
-    --warn:        #d9a443;
-    --bad:         #e0796b;
+    --bg:          #121a1e;
+    --surface:     #18232a;
+    --surface-2:   #1f2d35;
+    --ink:         #e6ecee;
+    --muted:       #91a3ab;
+    --line:        #2c3c45;
+    --accent:      #d98c5f;
+    --accent-soft: #33231a;
+    --good:        #5fbf8d;
+    --warn:        #5cadc2;
+    --bad:         #6f7f87;
     color-scheme: dark;
   }
 
@@ -143,10 +149,10 @@
   }
   .preset:hover { border-color: var(--accent); color: var(--accent); }
   .preset[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
-  /* The dark palette's accent is light, so pressed text flips to near-black. */
-  :root[data-theme="dark"] .preset[aria-pressed="true"] { color: #07100f; }
+  /* The dark palette's copper is light, so pressed text flips to near-black. */
+  :root[data-theme="dark"] .preset[aria-pressed="true"] { color: #2a1a10; }
   @media (prefers-color-scheme: dark) {
-    :root:not([data-theme="light"]) .preset[aria-pressed="true"] { color: #07100f; }
+    :root:not([data-theme="light"]) .preset[aria-pressed="true"] { color: #2a1a10; }
   }
   button:focus-visible, input:focus-visible, select:focus-visible, tr:focus-visible {
     outline: 2px solid var(--accent); outline-offset: 1px;
