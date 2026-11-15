@@ -1,0 +1,16 @@
+# Normalise line endings: store LF in the repository, check out whatever is
+# native to the platform. Without this, committing from Windows produces the
+# "LF will be replaced by CRLF" warnings and noisy cross-platform diffs.
+* text=auto
+
+# Explicit, so these never get mangled regardless of local git config.
+*.py    text diff=python
+*.md    text
+*.json  text
+*.html  text
+*.csv   text
+*.txt   text
+
+# Generated: collapse it in pull request diffs so reviews stay readable.
+site/index.html         linguist-generated=true
+site/demo_listings.json linguist-generated=true

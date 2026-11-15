@@ -45,6 +45,7 @@ and the four score weights.
 ### The pipeline
 
 ```bash
+pip install -r requirements.txt
 copy config_example.py config.py            # then edit it
 setx APIFY_API_TOKEN "apify_api_..."        # scraper credentials
 setx GOOGLE_MAPS_API_KEY "AIza..."          # drive times (optional)
@@ -65,7 +66,8 @@ weights can be re-tuned and re-scored as often as you like without re-scraping.
 Without `GOOGLE_MAPS_API_KEY`, step 2 falls back to straight-line distance × a
 minutes-per-mile factor and says so.
 
-Requires `apify-client`, `googlemaps`, `pandas`.
+Requires `apify-client`, `googlemaps` and `pandas` — see `requirements.txt`.
+The demo needs none of them.
 
 ---
 
@@ -160,3 +162,7 @@ output/                    pipeline output (gitignored)
 
 Credentials are read from environment variables. Nothing in this repository
 contains a key, a real listing, or a personal setting.
+
+## License
+
+MIT — see [LICENSE](LICENSE).

@@ -1,0 +1,10 @@
+# Dependencies for the scraping + scoring pipeline (step1 / step1b / step2).
+#
+# The demo in site/ needs none of these: site/index.html is self-contained
+# and opens in a browser with no install step.
+#
+#   pip install -r requirements.txt
+
+apify-client>=2.5.0,<3     # step1_scraper.py  - Homes.com scrape
+googlemaps>=4.10.0,<5      # step2_*.py        - Distance Matrix drive times
+pandas>=2.2.0,<3           # step2_*.py        - scoring and CSV handling
